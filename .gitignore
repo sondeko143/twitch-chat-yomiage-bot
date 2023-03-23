@@ -1,0 +1,6 @@
+.venv
+config.toml
+*.log
+__pycache__
+pickle.db
+.env

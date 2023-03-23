@@ -1,0 +1,34 @@
+{
+    "editor.formatOnSave": true,
+    "[python]": {
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+            "source.organizeImports": true,
+        },
+    },
+    "cSpell.words": [
+        "websockets"
+    ],
+    "python.analysis.stubPath": "typings",
+    "python.formatting.provider": "black",
+    "python.languageServer": "Pylance",
+    "python.linting.banditEnabled": true,
+    "isort.args": [
+        "--sl"
+    ],
+    "files.exclude": {
+        "**/*.rpyc": true,
+        "**/*.rpa": true,
+        "**/*.rpymc": true,
+        "**/cache/": true
+    },
+    "python.testing.unittestArgs": [
+        "-v",
+        "-s",
+        "./tests",
+        "-p",
+        "test_*.py"
+    ],
+    "python.testing.pytestEnabled": false,
+    "python.testing.unittestEnabled": true,
+}

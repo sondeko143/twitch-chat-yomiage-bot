@@ -1,0 +1,22 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+websockets = "*"
+click = "*"
+httpx = "*"
+fastapi = "*"
+uvicorn = {extras = ["standard"], version = "*"}
+pickledb = "*"
+python-dotenv = "*"
+
+[dev-packages]
+black = "*"
+isort = "*"
+bandit = "*"
+docutils = "*"
+
+[requires]
+python_version = "3.11"

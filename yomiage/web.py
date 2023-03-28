@@ -9,8 +9,8 @@ from fastapi.responses import RedirectResponse
 from pickledb import PickleDB
 from pickledb import load
 
-from yomiage.auth import get_access_token
-from yomiage.auth import refresh_access_token
+from yomiage.api import get_access_token
+from yomiage.api import refresh_access_token
 from yomiage.config import Settings
 from yomiage.config import get_settings
 
@@ -47,7 +47,7 @@ async def auth(settings: Annotated[Settings, Depends(get_settings)]):
         "client_id": settings.client_id,
         "redirect_uri": "http://localhost:8000/callback",
         "response_type": "code",
-        "scope": "chat:read",
+        "scope": "chat:read moderator:manage:banned_users channel:moderate",
         "force_verify": "true",
         "state": str(uuid.uuid4()),
     }

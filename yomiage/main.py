@@ -14,12 +14,14 @@ from pickledb import load
 from websockets.client import connect
 from websockets.exceptions import ConnectionClosed
 
-from yomiage.auth import refresh_access_token
+from yomiage.api import ban_user
+from yomiage.api import refresh_access_token
 from yomiage.config import Settings
 from yomiage.config import get_settings
+from yomiage.server import open_auth
 
 logger = logging.getLogger("websockets")
-logger.setLevel(logging.ERROR)
+logger.setLevel(logging.DEBUG)
 logger.addHandler(logging.StreamHandler())
 
 
@@ -111,7 +113,7 @@ async def read_chat(uri: str, username: str, channel: str, port: int, db: Pickle
             continue
 
 
-def run_bot(db: PickleDB, settings: Settings):
+def run_yomiage_bot(db: PickleDB, settings: Settings):
     asyncio.run(
         read_chat(
             "wss://irc-ws.chat.twitch.tv:443",
@@ -125,9 +127,16 @@ def run_bot(db: PickleDB, settings: Settings):
 
 @click.command()
 @click.option("-r", "--refresh", is_flag=True)
-def main(refresh: bool):
+@click.option("-a", "--get-auth", is_flag=True)
+@click.option("-b", "--ban-bots", is_flag=True)
+def main(refresh: bool, get_auth: bool, ban_bots: bool):
     settings = get_settings()
     db = load(settings.db_file, auto_dump=False)
-    if refresh:
+    if get_auth:
+        open_auth(None)
+    elif refresh:
         refresh_access_token(db, settings)
-    run_bot(db, settings)
+    elif ban_bots:
+        ban_user(db, settings)
+    else:
+        run_yomiage_bot(db, settings)

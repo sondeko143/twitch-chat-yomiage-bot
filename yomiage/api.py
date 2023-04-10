@@ -1,5 +1,6 @@
 import logging
 from time import sleep
+from typing import List
 from typing import cast
 
 import httpx
@@ -62,13 +63,26 @@ def get_user_id(username: str, access_token: str, client_id: str):
     )
     body = response.json()
     print(body)
+    if not body["data"]:
+        raise TypeError("no data")
     return body["data"][0]["id"]
 
 
-def ban_bot_list():
+def get_bot_list_from_twitch_insights() -> List[str]:
     response = httpx.get("https://api.twitchinsights.net/v1/bots/online")
     body = response.json()
-    bot_names = [bot[0] for bot in body["bots"]]
+    return [bot[0] for bot in body["bots"]]
+
+
+def get_bot_list() -> List[str]:
+    response = httpx.get(
+        "https://raw.githubusercontent.com/arrowgent/Twitchtv-Bots-List/main/list.txt"
+    )
+    return [name.strip() for name in response.text.splitlines()]
+
+
+def ban_bot_list():
+    bot_names = get_bot_list()
     response = httpx.get("https://mreliasen.github.io/twitch-bot-list/whitelist.json")
     body = response.json()
     whitelist_bot_names = body
@@ -89,11 +103,14 @@ def ban_user(db: PickleDB, settings: Settings):
             )
             db.set("user_id", user_id)
             db.dump()
-        banned_user_id = get_user_id(
-            username=banned_username,
-            access_token=access_token,
-            client_id=settings.client_id,
-        )
+        try:
+            banned_user_id = get_user_id(
+                username=banned_username,
+                access_token=access_token,
+                client_id=settings.client_id,
+            )
+        except TypeError:
+            continue
         headers = [
             (b"Authorization", b"Bearer " + bytes(access_token, "utf-8")),
             (b"content-type", b"application/json"),

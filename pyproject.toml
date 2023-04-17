@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "chatbot"
+name = "twitch-chat-yomiage-bot"
 version = "0.1.0"
 description = "A twitch bot to read chat messages."
 authors = ["sondeko <sondeko143@gmail.com>"]

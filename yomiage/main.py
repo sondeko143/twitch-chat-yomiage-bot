@@ -1,16 +1,16 @@
 import asyncio
 import logging
 import re
-from codecs import encode
 from dataclasses import dataclass
 from enum import Enum
-from socket import AF_INET
-from socket import SOCK_STREAM
-from socket import socket
 
 import click
+import grpc
 from pickledb import PickleDB
 from pickledb import load
+from vstreamer_protos.commander.commander_pb2 import TRANSLATE
+from vstreamer_protos.commander.commander_pb2 import Command
+from vstreamer_protos.commander.commander_pb2_grpc import CommanderStub
 from websockets.client import connect
 from websockets.exceptions import ConnectionClosed
 
@@ -74,16 +74,15 @@ def parse_message(message: str):
     )
 
 
-def send_message(chat_message: str, port: int):
-    message = "t" + chat_message + "\n"
-    logger.debug(message)
-    output_bytes = encode(message, "utf-8", errors="replace")
+async def send_message(chat_message: str, port: int):
     try:
-        with socket(AF_INET, SOCK_STREAM) as sock:
-            sock.connect(("localhost", port))
-            sock.sendall(output_bytes)
-    except ConnectionRefusedError:
-        logger.warning("The speech process does not seem to working.")
+        async with grpc.aio.insecure_channel(f"localhost:{port}") as channel:
+            stub = CommanderStub(channel)
+            await stub.process_command(
+                Command(operations=[TRANSLATE], text=chat_message)
+            )
+    except grpc.aio.AioRpcError as e:
+        logger.warning(e)
 
 
 async def read_chat(uri: str, username: str, channel: str, port: int, db: PickleDB):
@@ -101,7 +100,7 @@ async def read_chat(uri: str, username: str, channel: str, port: int, db: Pickle
                         parsed.user,
                         parsed.chat_message,
                     )
-                    send_message(parsed.chat_message, port)
+                    await send_message(parsed.chat_message, port)
                 elif parsed.message_type == MessageType.LOGIN_FAILED:
                     settings = get_settings()
                     refresh_access_token(db, settings)

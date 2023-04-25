@@ -14,7 +14,7 @@ fastapi = "^0.95.0"
 uvicorn = "^0.21.1"
 pickleDB = "^0.9.2"
 python-dotenv = "^1.0.0"
-vstreamer-protos = { url = "https://github.com/sondeko143/vstreamer-protos/releases/download/main-0eb0eb26/vstreamer_protos-0.1.0-py3-none-any.whl" }
+vstreamer-protos = { url = "https://github.com/sondeko143/vstreamer-protos/releases/download/main-4b1e1071/vstreamer_protos-0.1.0-py3-none-any.whl" }
 
 [tool.poetry.group.dev.dependencies]
 black = "^23.3.0"

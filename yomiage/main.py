@@ -6,10 +6,13 @@ from enum import Enum
 
 import click
 import grpc
+import vstreamer_protos.commander.commander_pb2
 from pickledb import PickleDB
 from pickledb import load
-from vstreamer_protos.commander.commander_pb2 import TRANSLATE
 from vstreamer_protos.commander.commander_pb2 import Command
+from vstreamer_protos.commander.commander_pb2 import Operation
+from vstreamer_protos.commander.commander_pb2 import OperationChain
+from vstreamer_protos.commander.commander_pb2 import OperationRoute
 from vstreamer_protos.commander.commander_pb2_grpc import CommanderStub
 from websockets.client import connect
 from websockets.exceptions import ConnectionClosed
@@ -74,18 +77,38 @@ def parse_message(message: str):
     )
 
 
-async def send_message(chat_message: str, port: int):
+def str_to_operation(op_str: str) -> Operation:
+    return getattr(vstreamer_protos.commander.commander_pb2, op_str.upper())
+
+
+async def send_message(chat_message: str, port: int, operations: list[Operation]):
     try:
-        async with grpc.aio.insecure_channel(f"localhost:{port}") as channel:
+        address = f"localhost:{port}"
+        async with grpc.aio.insecure_channel(address) as channel:
             stub = CommanderStub(channel)
+            logger.info("send to: %s", address)
             await stub.process_command(
-                Command(operations=[TRANSLATE], text=chat_message)
+                Command(
+                    chains=[
+                        OperationChain(
+                            operations=[OperationRoute(operation=o) for o in operations]
+                        )
+                    ],
+                    text=chat_message,
+                )
             )
     except grpc.aio.AioRpcError as e:
         logger.warning(e)
 
 
-async def read_chat(uri: str, username: str, channel: str, port: int, db: PickleDB):
+async def read_chat(
+    uri: str,
+    username: str,
+    channel: str,
+    port: int,
+    operations: list[Operation],
+    db: PickleDB,
+):
     async for connection in connect(uri):
         try:
             await connection.send(f"PASS oauth:{db.get('access_token')}")
@@ -100,7 +123,7 @@ async def read_chat(uri: str, username: str, channel: str, port: int, db: Pickle
                         parsed.user,
                         parsed.chat_message,
                     )
-                    await send_message(parsed.chat_message, port)
+                    await send_message(parsed.chat_message, port, operations=operations)
                 elif parsed.message_type == MessageType.LOGIN_FAILED:
                     settings = get_settings()
                     refresh_access_token(db, settings)
@@ -119,7 +142,8 @@ def run_yomiage_bot(db: PickleDB, settings: Settings):
             settings.username,
             settings.channel,
             settings.speech_port,
-            db,
+            operations=[str_to_operation(o) for o in settings.operations],
+            db=db,
         )
     )
 

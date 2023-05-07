@@ -743,7 +743,7 @@ category = "main"
 optional = false
 python-versions = ">=3.10,<4.0"
 files = [
-    {file = "vstreamer_protos-0.1.0-py3-none-any.whl", hash = "sha256:e9696685fba9e7fc5428f4c6c329b3cc0ff7003a0c0040b1c691ab826243b6ca"},
+    {file = "vstreamer_protos-0.1.0-py3-none-any.whl", hash = "sha256:f691fb6344bd6536f2b62c7f015b7e03348691f63691a805d97c2f292be2e429"},
 ]
 
 [package.dependencies]
@@ -752,7 +752,7 @@ protobuf = ">=4.22.3,<5.0.0"
 
 [package.source]
 type = "url"
-url = "https://github.com/sondeko143/vstreamer-protos/releases/download/main-9a5d1966/vstreamer_protos-0.1.0-py3-none-any.whl"
+url = "https://github.com/sondeko143/vstreamer-protos/releases/download/main-91cf58c5/vstreamer_protos-0.1.0-py3-none-any.whl"
 [[package]]
 name = "websockets"
 version = "11.0.2"
@@ -836,4 +836,4 @@ files = [
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.11"
-content-hash = "fc25c827c0d6ae9a2175284e2eb871d305288deb01c509182ed2e5b113c46376"
+content-hash = "6a73e8669be483117d5efc6cd2a5eb2bb7c58ab6a77abd27d2caedef30317270"

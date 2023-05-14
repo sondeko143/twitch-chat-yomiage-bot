@@ -4,3 +4,5 @@ config.toml
 __pycache__
 pickle.db
 .env
+db/**
+target/**

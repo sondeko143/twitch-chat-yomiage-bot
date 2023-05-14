@@ -5,9 +5,23 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug",
+            "program": "${workspaceRoot}/target/debug/twitch_chat_yomiage_bot",
+            "args": [
+                "read-chat"
+            ],
+            "cwd": "${workspaceFolder}",
+            "sourceLanguages": [
+                "rust"
+            ],
+            "preLaunchTask": "rust: cargo build"
+        },
+        {
             "name": "Python: Current File",
             "type": "python",
-            "request": "test",
+            "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
             "justMyCode": true

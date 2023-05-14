@@ -7,6 +7,9 @@
         },
     },
     "cSpell.words": [
+        "reqwest",
+        "tungstenite",
+        "tungstine",
         "websockets"
     ],
     "python.analysis.stubPath": "typings",

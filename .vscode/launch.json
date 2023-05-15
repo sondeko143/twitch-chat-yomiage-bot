@@ -10,7 +10,7 @@
             "name": "Debug",
             "program": "${workspaceRoot}/target/debug/twitch_chat_yomiage_bot",
             "args": [
-                "read-chat"
+                "${input:subCommand}"
             ],
             "cwd": "${workspaceFolder}",
             "sourceLanguages": [
@@ -18,25 +18,18 @@
             ],
             "preLaunchTask": "rust: cargo build"
         },
+    ],
+    "inputs": [
         {
-            "name": "Python: Current File",
-            "type": "python",
-            "request": "launch",
-            "program": "${file}",
-            "console": "integratedTerminal",
-            "justMyCode": true
-        },
-        {
-            "name": "yomiage",
-            "module": "uvicorn",
-            "type": "python",
-            "request": "launch",
-            "args": [
-                "yomiage.main:app",
-                "--reload",
-                "--port",
-                "8000"
+            "type": "pickString",
+            "id": "subCommand",
+            "description": "what kind of sub command",
+            "options": [
+                "read-chat",
+                "auth-code",
+                "refresh-token",
+                "ban-bots"
             ]
-        },
+        }
     ]
 }

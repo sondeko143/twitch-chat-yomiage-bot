@@ -27,7 +27,7 @@ struct AppConfig {
     client_secret: String,
     channel: String,
     username: String,
-    speech_port: i16,
+    speech_address: String,
     operations: Vec<String>,
     db_dir: PathBuf,
     db_name: String,
@@ -66,7 +66,7 @@ async fn main() {
                 &app_config.client_id,
                 &app_config.client_secret,
                 app_config.operations,
-                app_config.speech_port,
+                &app_config.speech_address,
             )
             .await
             {

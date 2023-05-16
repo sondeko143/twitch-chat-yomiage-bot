@@ -19,7 +19,7 @@ pub async fn read_chat(
     client_id: &str,
     client_secret: &str,
     operations: Vec<String>,
-    port: i16,
+    address: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let chat_msg_pat = Regex::new(
         r":(?P<user>.+)!.+@.+\.tmi\.twitch\.tv PRIVMSG #(?P<channel>.+) :(?P<chat_msg>.+)",
@@ -53,7 +53,7 @@ pub async fn read_chat(
                         "{:?} says {:?} in #{:?}",
                         &caps["user"], &caps["chat_msg"], &caps["channel"]
                     );
-                    let dest = format!("http://localhost:{}", port);
+                    let dest = address.to_string();
                     send_chat_message_to_read(&caps["chat_msg"], dest, &operations).await?;
                 } else if login_failed_pat.is_match(&msg_str) {
                     info!("expired.");
@@ -124,8 +124,12 @@ impl std::error::Error for ConvertError {}
 fn convert_to_operation(op_str: &String) -> Result<Operation, ConvertError> {
     return match op_str.as_str() {
         "translate" => Ok(Operation::Translate),
+        "transl" => Ok(Operation::Translate),
         "tts" => Ok(Operation::Tts),
         "playback" => Ok(Operation::Playback),
+        "play" => Ok(Operation::Playback),
+        "subtitle" => Ok(Operation::Subtitle),
+        "sub" => Ok(Operation::Subtitle),
         _ => Err(ConvertError),
     };
 }

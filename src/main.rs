@@ -59,7 +59,7 @@ async fn main() {
     match &args.command {
         Some(Commands::ReadChat {}) => {
             if let Err(e) = chat::read_chat(
-                app_config.db_dir.clone(),
+                &app_config.db_dir,
                 &app_config.db_name,
                 &app_config.username,
                 &app_config.channel,
@@ -77,7 +77,7 @@ async fn main() {
         }
         Some(Commands::AuthCode {}) => {
             match auth::auth_code_grant(
-                app_config.db_dir.clone(),
+                &app_config.db_dir,
                 &app_config.db_name,
                 &app_config.client_id,
                 &app_config.client_secret,
@@ -90,7 +90,7 @@ async fn main() {
         }
         Some(Commands::BanBots {}) => {
             match ban::ban_bots(
-                app_config.db_dir.clone(),
+                &app_config.db_dir,
                 &app_config.db_name,
                 &app_config.username,
                 &app_config.client_id,
@@ -103,7 +103,7 @@ async fn main() {
         }
         Some(Commands::RefreshToken {}) => {
             match auth::refresh_token_grant(
-                app_config.db_dir.clone(),
+                &app_config.db_dir,
                 &app_config.db_name,
                 &app_config.client_id,
                 &app_config.client_secret,

@@ -86,15 +86,16 @@ pub async fn get_tokens_by_code(
     Ok((res.access_token, res.refresh_token))
 }
 
-#[derive(Serialize, Deserialize)]
-struct Ban {
-    data: BanData,
+#[derive(Deserialize, Serialize)]
+struct Ban<'a> {
+    #[serde(borrow)]
+    data: BanData<'a>,
 }
 
 #[derive(Serialize, Deserialize)]
-struct BanData {
-    user_id: String,
-    reason: String,
+struct BanData<'a> {
+    user_id: &'a str,
+    reason: &'a str,
 }
 
 pub async fn ban_user(
@@ -106,8 +107,8 @@ pub async fn ban_user(
     let headers = auth_headers(access_token, client_id);
     let ban = Ban {
         data: BanData {
-            user_id: banned_id.to_string(),
-            reason: "bot".to_string(),
+            user_id: banned_id,
+            reason: "bot",
         },
     };
     let res = reqwest::Client::new()

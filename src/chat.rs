@@ -6,13 +6,16 @@ use jfs::Store;
 use log::{info, warn};
 use regex::Regex;
 use std::path::PathBuf;
-use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
+use tokio_tungstenite::{
+    connect_async, tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream,
+};
+use url::Url;
 use vstreamer_protos::{
     commander_client::CommanderClient, Command, Operation, OperationChain, OperationRoute,
 };
 
 pub async fn read_chat(
-    db_dir: PathBuf,
+    db_dir: &PathBuf,
     db_name: &str,
     username: &str,
     channel: &str,
@@ -21,30 +24,30 @@ pub async fn read_chat(
     operations: Vec<String>,
     address: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    const CONNECT_ADDR: &str = "wss://irc-ws.chat.twitch.tv:443";
     let chat_msg_pat = Regex::new(
         r":(?P<user>.+)!.+@.+\.tmi\.twitch\.tv PRIVMSG #(?P<channel>.+) :(?P<chat_msg>.+)",
     )
     .unwrap();
     let login_failed_pat =
         Regex::new(r":tmi\.twitch\.tv NOTICE \* :Login authentication failed\s*").unwrap();
-    let connect_addr = "wss://irc-ws.chat.twitch.tv:443";
-    let url = url::Url::parse(connect_addr)?;
+    let url = url::Url::parse(CONNECT_ADDR)?;
     let db = Store::new(db_dir)?;
     loop {
-        let (mut ws_stream, _) = connect_async(&url).await?;
         let obj = db.get::<DBStore>(db_name)?;
-        info!("authorizing...");
-        ws_stream
-            .send(Message::Text(format!("PASS oauth:{}", obj.access_token)))
-            .await?;
-        ws_stream
-            .send(Message::Text(format!("NICK {}", username)))
-            .await?;
-        ws_stream
-            .send(Message::Text(format!("JOIN #{}", channel)))
-            .await?;
+        let mut ws_stream =
+            match connect_and_authorizing(&url, &obj.access_token, username, channel).await {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
         while let Some(msg) = ws_stream.next().await {
-            let msg = msg?;
+            let msg = match msg {
+                Ok(m) => m,
+                Err(e) => {
+                    warn!("{}", e);
+                    break;
+                }
+            };
             if msg.is_text() || msg.is_binary() {
                 let msg_str = msg.into_text()?;
                 if chat_msg_pat.is_match(&msg_str) {
@@ -53,8 +56,10 @@ pub async fn read_chat(
                         "{:?} says {:?} in #{:?}",
                         &caps["user"], &caps["chat_msg"], &caps["channel"]
                     );
-                    let dest = address.to_string();
-                    send_chat_message_to_read(&caps["chat_msg"], dest, &operations).await?;
+                    match send_chat_message_to_read(&caps["chat_msg"], address, &operations).await {
+                        Ok(_) => (),
+                        Err(err) => warn!("{:?}", err),
+                    }
                 } else if login_failed_pat.is_match(&msg_str) {
                     info!("expired.");
                     let (access_token, refresh_token) =
@@ -62,7 +67,7 @@ pub async fn read_chat(
                     let updated_obj = DBStore {
                         access_token: access_token,
                         refresh_token: refresh_token,
-                        ..obj.clone()
+                        ..obj
                     };
                     db.save_with_id(&updated_obj, db_name)?;
                     break;
@@ -74,18 +79,36 @@ pub async fn read_chat(
     }
 }
 
+async fn connect_and_authorizing(
+    url: &Url,
+    access_token: &str,
+    username: &str,
+    channel: &str,
+) -> Result<
+    WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
+    tokio_tungstenite::tungstenite::Error,
+> {
+    let (mut ws_stream, _) = connect_async(url).await?;
+    info!("authorizing...");
+    ws_stream
+        .send(Message::Text(format!("PASS oauth:{}", access_token)))
+        .await?;
+    ws_stream
+        .send(Message::Text(format!("NICK {}", username)))
+        .await?;
+    ws_stream
+        .send(Message::Text(format!("JOIN #{}", channel)))
+        .await?;
+    Ok(ws_stream)
+}
+
 async fn send_chat_message_to_read(
     chat_msg: &str,
-    uri: String,
+    uri: &str,
     operations: &Vec<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut channel = match CommanderClient::connect(uri).await {
-        Ok(channel) => channel,
-        Err(error) => {
-            warn!("{:?}", error.to_string());
-            return Ok(());
-        }
-    };
+    let dst = uri.to_string();
+    let mut channel = CommanderClient::connect(dst).await?;
     let op_routes = operations
         .iter()
         .map(convert_to_operation)
@@ -102,13 +125,7 @@ async fn send_chat_message_to_read(
         text: String::from(chat_msg),
         ..Command::default()
     });
-    let _ = match channel.process_command(c).await {
-        Ok(response) => response,
-        Err(status) => {
-            warn!("{:?}", status.message());
-            return Ok(());
-        }
-    };
+    channel.process_command(c).await?;
     Ok(())
 }
 

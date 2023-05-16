@@ -14,7 +14,7 @@ use std::{net::SocketAddr, path::PathBuf};
 use tokio::task::JoinError;
 
 pub async fn auth_code_grant(
-    db_dir: PathBuf,
+    db_dir: &PathBuf,
     db_name: &str,
     client_id: &str,
     client_secret: &str,
@@ -35,7 +35,7 @@ pub async fn auth_code_grant(
 }
 
 pub async fn refresh_token_grant(
-    db_dir: PathBuf,
+    db_dir: &PathBuf,
     db_name: &str,
     client_id: &str,
     client_secret: &str,
@@ -47,7 +47,7 @@ pub async fn refresh_token_grant(
     let updated_obj = DBStore {
         access_token: access_token,
         refresh_token: refresh_token,
-        ..obj.clone()
+        ..obj
     };
     db.save_with_id(&updated_obj, db_name)?;
     Ok(())
@@ -74,16 +74,17 @@ async fn start_server(state: ServerState) -> Result<(), hyper::Error> {
 }
 
 async fn auth(State(state): State<ServerState>) -> impl IntoResponse {
-    let params = vec![
-        ("client_id", state.client_id),
-        ("redirect_uri", "http://localhost:8000/callback".to_string()),
-        ("response_type", "code".to_string()),
+    let state_id = uuid::Uuid::new_v4().to_string();
+    let params: Vec<(&str, &str)> = vec![
+        ("client_id", state.client_id.as_str()),
+        ("redirect_uri", "http://localhost:8000/callback"),
+        ("response_type", "code"),
         (
             "scope",
-            "chat:read moderator:manage:banned_users channel:moderate".to_string(),
+            "chat:read moderator:manage:banned_users channel:moderate",
         ),
-        ("force_verify", "true".to_string()),
-        ("state", uuid::Uuid::new_v4().to_string()),
+        ("force_verify", "true"),
+        ("state", state_id.as_str()),
     ];
     let queries = params
         .iter()
@@ -134,7 +135,7 @@ async fn obtain_access_token(
     let updated_obj = DBStore {
         access_token: access_token,
         refresh_token: refresh_token,
-        ..obj.clone()
+        ..obj
     };
     db.save_with_id(&updated_obj, &db_name)?;
     Ok(())

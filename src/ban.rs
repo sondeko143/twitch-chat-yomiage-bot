@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use crate::DBStore;
 
 pub async fn ban_bots(
-    db_dir: PathBuf,
+    db_dir: &PathBuf,
     db_name: &str,
     username: &str,
     client_id: &str,
@@ -20,17 +20,22 @@ pub async fn ban_bots(
     let my_user_id = &my_user.data[0].id;
     let updated_obj = DBStore {
         user_id: my_user_id.to_string(),
-        ..obj.clone()
+        ..obj
     };
     db.save_with_id(&updated_obj, db_name)?;
     let bot_names = get_bots_list().await?;
     for bot_name in bot_names {
-        match api::get_user(&bot_name, &obj.access_token, client_id).await {
+        match api::get_user(&bot_name, &updated_obj.access_token, client_id).await {
             Ok(user) => {
                 if !user.data.is_empty() {
                     info!("ban {}: {}", bot_name, user.data[0].id);
-                    match api::ban_user(my_user_id, &user.data[0].id, &obj.access_token, client_id)
-                        .await
+                    match api::ban_user(
+                        my_user_id,
+                        &user.data[0].id,
+                        &updated_obj.access_token,
+                        client_id,
+                    )
+                    .await
                     {
                         Ok(response) => {
                             info!("banned {}: {} {}", bot_name, user.data[0].id, response)

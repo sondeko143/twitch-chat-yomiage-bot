@@ -31,12 +31,13 @@ pub async fn read_chat(
     .unwrap();
     let login_failed_pat =
         Regex::new(r":tmi\.twitch\.tv NOTICE \* :Login authentication failed\s*").unwrap();
+    let ping_pat = Regex::new(r"PING :tmi\.twitch\.tv").unwrap();
     let url = url::Url::parse(CONNECT_ADDR)?;
     let db = Store::new(db_dir)?;
     loop {
         let obj = db.get::<DBStore>(db_name)?;
         let mut ws_stream =
-            match connect_and_authorizing(&url, &obj.access_token, username, channel).await {
+            match connect_and_authorize(&url, &obj.access_token, username, channel).await {
                 Ok(s) => s,
                 Err(_) => continue,
             };
@@ -65,12 +66,24 @@ pub async fn read_chat(
                     let (access_token, refresh_token) =
                         get_tokens_by_refresh(&obj.refresh_token, client_id, client_secret).await?;
                     let updated_obj = DBStore {
-                        access_token: access_token,
-                        refresh_token: refresh_token,
+                        access_token,
+                        refresh_token,
                         ..obj
                     };
                     db.save_with_id(&updated_obj, db_name)?;
                     break;
+                } else if ping_pat.is_match(&msg_str) {
+                    info!("respond to ping");
+                    match ws_stream
+                        .send(Message::Text(String::from("PONG :tmi.twitch.tv")))
+                        .await
+                    {
+                        Ok(_) => (),
+                        Err(err) => {
+                            warn!("{}", err);
+                            break;
+                        }
+                    }
                 } else {
                     info!("{}", msg_str);
                 }
@@ -79,7 +92,7 @@ pub async fn read_chat(
     }
 }
 
-async fn connect_and_authorizing(
+async fn connect_and_authorize(
     url: &Url,
     access_token: &str,
     username: &str,

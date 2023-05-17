@@ -1,9 +1,8 @@
 use crate::api;
+use crate::DBStore;
 use jfs::Store;
 use log::{info, warn};
 use std::path::PathBuf;
-
-use crate::DBStore;
 
 pub async fn ban_bots(
     db_dir: &PathBuf,

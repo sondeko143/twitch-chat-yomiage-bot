@@ -1,5 +1,15 @@
 use axum::http::{HeaderMap, HeaderValue};
+use const_format::formatcp;
 use serde::{Deserialize, Serialize};
+
+const TWITCH_API_HOST: &'static str = "api.twitch.tv";
+const TWITCH_USERS_API_URL: &'static str = formatcp!("https://{}/helix/users", TWITCH_API_HOST);
+const TWITCH_BANS_API_URL: &'static str =
+    formatcp!("https://{}/helix/moderation/bans", TWITCH_API_HOST);
+const TWITCH_ID_HOST: &'static str = "id.twitch.tv";
+const TWITCH_OAUTH2_TOKEN_URL: &'static str = formatcp!("https://{}/oauth2/token", TWITCH_ID_HOST);
+pub const TWITCH_OAUTH2_AUTHZ_URL: &'static str =
+    formatcp!("https://{}/oauth2/authorize", TWITCH_ID_HOST);
 
 #[derive(Serialize, Deserialize)]
 pub struct User {
@@ -18,7 +28,7 @@ pub async fn get_user(
 ) -> Result<User, reqwest::Error> {
     let headers = auth_headers(access_token, client_id);
     let res: User = reqwest::Client::new()
-        .get("https://api.twitch.tv/helix/users")
+        .get(TWITCH_USERS_API_URL)
         .headers(headers)
         .query(&[("login", username)])
         .send()
@@ -41,7 +51,7 @@ pub async fn get_tokens_by_refresh(
     client_secret: &str,
 ) -> Result<(String, String), reqwest::Error> {
     let res: RefreshToken = reqwest::Client::new()
-        .post("https://id.twitch.tv/oauth2/token")
+        .post(TWITCH_OAUTH2_TOKEN_URL)
         .form(&[
             ("refresh_token", refresh_token),
             ("client_id", client_id),
@@ -64,15 +74,16 @@ struct AccessToken {
 }
 
 pub async fn get_tokens_by_code(
+    redirect_uri: &str,
     code: &str,
     client_id: &str,
     client_secret: &str,
 ) -> Result<(String, String), reqwest::Error> {
     let res: AccessToken = reqwest::Client::new()
-        .post("https://id.twitch.tv/oauth2/token")
+        .post(TWITCH_OAUTH2_TOKEN_URL)
         .form(&[
             ("code", code),
-            ("redirect_uri", "http://localhost:8000/callback"),
+            ("redirect_uri", redirect_uri),
             ("client_id", client_id),
             ("grant_type", "authorization_code"),
             ("client_secret", client_secret),
@@ -112,7 +123,7 @@ pub async fn ban_user(
         },
     };
     let res = reqwest::Client::new()
-        .post("https://api.twitch.tv/helix/moderation/bans")
+        .post(TWITCH_BANS_API_URL)
         .headers(headers)
         .query(&[
             ("broadcaster_id", operator_id),

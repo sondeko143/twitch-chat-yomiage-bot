@@ -29,6 +29,7 @@ struct AppConfig {
     username: String,
     speech_address: String,
     operations: Vec<String>,
+    listen_address: String,
     db_dir: PathBuf,
     db_name: String,
 }
@@ -51,6 +52,8 @@ async fn main() {
                 .list_separator(",")
                 .with_list_parse_key("operations"),
         )
+        .set_default("listen_address", "localhost:8000")
+        .expect("this must not happen")
         .build()
         .unwrap();
     let app_config: AppConfig = config.try_deserialize().unwrap();
@@ -77,6 +80,7 @@ async fn main() {
         }
         Some(Commands::AuthCode {}) => {
             match auth::auth_code_grant(
+                &app_config.listen_address,
                 &app_config.db_dir,
                 &app_config.db_name,
                 &app_config.client_id,

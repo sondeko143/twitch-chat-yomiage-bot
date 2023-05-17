@@ -1,4 +1,4 @@
-use crate::api::{get_tokens_by_code, get_tokens_by_refresh};
+use crate::api::{get_tokens_by_code, get_tokens_by_refresh, TWITCH_OAUTH2_AUTHZ_URL};
 use crate::DBStore;
 use axum::{
     extract::{Query, State},
@@ -10,22 +10,28 @@ use axum::{
 use jfs::Store;
 use log::{info, warn};
 use serde::Deserialize;
+use std::borrow::Cow;
+use std::net::ToSocketAddrs;
 use std::{net::SocketAddr, path::PathBuf};
-use tokio::task::JoinError;
 
 pub async fn auth_code_grant(
+    listen_addr: &str,
     db_dir: &PathBuf,
     db_name: &str,
     client_id: &str,
     client_secret: &str,
-) -> Result<(), JoinError> {
-    let server_t = tokio::spawn(start_server(ServerState {
-        db_dir: db_dir.clone(),
-        db_name: db_name.to_string(),
-        client_id: client_id.to_string(),
-        client_secret: client_secret.to_string(),
-    }));
-    if webbrowser::open("http://localhost:8000").is_ok() {
+) -> Result<(), Box<dyn std::error::Error>> {
+    let server_t = tokio::spawn(start_server(
+        listen_addr.to_socket_addrs()?.next().unwrap(),
+        ServerState {
+            db_dir: db_dir.clone(),
+            db_name: db_name.to_string(),
+            client_id: client_id.to_string(),
+            client_secret: client_secret.to_string(),
+            listen_addr: listen_addr.to_string(),
+        },
+    ));
+    if webbrowser::open(&format!("http://{}", listen_addr)).is_ok() {
         let t = server_t.await?;
         t.err();
     } else {
@@ -45,8 +51,8 @@ pub async fn refresh_token_grant(
     let (access_token, refresh_token) =
         get_tokens_by_refresh(&obj.refresh_token, client_id, client_secret).await?;
     let updated_obj = DBStore {
-        access_token: access_token,
-        refresh_token: refresh_token,
+        access_token,
+        refresh_token,
         ..obj
     };
     db.save_with_id(&updated_obj, db_name)?;
@@ -59,14 +65,14 @@ struct ServerState {
     db_name: String,
     client_id: String,
     client_secret: String,
+    listen_addr: String,
 }
 
-async fn start_server(state: ServerState) -> Result<(), hyper::Error> {
+async fn start_server(addr: SocketAddr, state: ServerState) -> Result<(), hyper::Error> {
     let app = Router::new()
         .route("/", get(auth))
         .route("/callback", get(callback))
         .with_state(state);
-    let addr = SocketAddr::from(([127, 0, 0, 1], 8000));
     axum::Server::bind(&addr)
         .serve(app.into_make_service())
         .await?;
@@ -74,17 +80,18 @@ async fn start_server(state: ServerState) -> Result<(), hyper::Error> {
 }
 
 async fn auth(State(state): State<ServerState>) -> impl IntoResponse {
-    let state_id = uuid::Uuid::new_v4().to_string();
+    let state_id = &uuid::Uuid::new_v4().to_string();
+    let redirect_uri = &format!("http://{}/callback", state.listen_addr);
     let params: Vec<(&str, &str)> = vec![
-        ("client_id", state.client_id.as_str()),
-        ("redirect_uri", "http://localhost:8000/callback"),
+        ("client_id", &state.client_id),
+        ("redirect_uri", redirect_uri),
         ("response_type", "code"),
         (
             "scope",
             "chat:read moderator:manage:banned_users channel:moderate",
         ),
         ("force_verify", "true"),
-        ("state", state_id.as_str()),
+        ("state", state_id),
     ];
     let queries = params
         .iter()
@@ -92,7 +99,7 @@ async fn auth(State(state): State<ServerState>) -> impl IntoResponse {
         .collect::<Vec<_>>()
         .join("&");
 
-    return Redirect::to(format!("https://id.twitch.tv/oauth2/authorize?{}", queries).as_str())
+    return Redirect::to(format!("{}?{}", TWITCH_OAUTH2_AUTHZ_URL, queries).as_str())
         .into_response();
 }
 
@@ -103,6 +110,7 @@ struct Callback {
 
 async fn callback(code: Query<Callback>, State(state): State<ServerState>) -> impl IntoResponse {
     match obtain_access_token(
+        &format!("http://{}/callback", state.listen_addr),
         &code.code,
         &state.client_id,
         &state.client_secret,
@@ -112,29 +120,33 @@ async fn callback(code: Query<Callback>, State(state): State<ServerState>) -> im
     .await
     {
         Ok(_) => {
-            info!("update tokens successfully");
-            return StatusCode::OK.into_response();
+            let msg = "tokens updated successfully";
+            info!("{}", msg);
+            (StatusCode::OK, Cow::from(msg))
         }
         Err(err) => {
-            warn!("failed to update tokens: {}", err);
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            let msg = format!("failed to update tokens: {}", err);
+            warn!("{}", msg);
+            (StatusCode::INTERNAL_SERVER_ERROR, Cow::from(msg))
         }
     }
 }
 
 async fn obtain_access_token(
+    redirect_uri: &str,
     code: &str,
     client_id: &str,
     client_secret: &str,
     db_name: &str,
     db_dir: PathBuf,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (access_token, refresh_token) = get_tokens_by_code(code, client_id, client_secret).await?;
+    let (access_token, refresh_token) =
+        get_tokens_by_code(redirect_uri, code, client_id, client_secret).await?;
     let db = Store::new(db_dir)?;
     let obj = db.get::<DBStore>(&db_name)?;
     let updated_obj = DBStore {
-        access_token: access_token,
-        refresh_token: refresh_token,
+        access_token,
+        refresh_token,
         ..obj
     };
     db.save_with_id(&updated_obj, &db_name)?;

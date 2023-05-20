@@ -14,6 +14,9 @@ use vstreamer_protos::{
     commander_client::CommanderClient, Command, Operation, OperationChain, OperationRoute,
 };
 
+const CONNECT_ADDR: &str = "wss://irc-ws.chat.twitch.tv:443";
+const IRC_TIMEOUT_SECS: u64 = 60 * 10;
+
 pub async fn read_chat(
     db_dir: &PathBuf,
     db_name: &str,
@@ -24,7 +27,6 @@ pub async fn read_chat(
     operations: Vec<String>,
     address: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    const CONNECT_ADDR: &str = "wss://irc-ws.chat.twitch.tv:443";
     let chat_msg_pat = Regex::new(
         r":(?P<user>.+)!.+@.+\.tmi\.twitch\.tv PRIVMSG #(?P<channel>.+) :(?P<chat_msg>.+)",
     )
@@ -41,7 +43,12 @@ pub async fn read_chat(
                 Ok(s) => s,
                 Err(_) => continue,
             };
-        while let Some(msg) = ws_stream.next().await {
+        while let Ok(Some(msg)) = tokio::time::timeout(
+            std::time::Duration::from_secs(IRC_TIMEOUT_SECS),
+            ws_stream.next(),
+        )
+        .await
+        {
             let msg = match msg {
                 Ok(m) => m,
                 Err(e) => {

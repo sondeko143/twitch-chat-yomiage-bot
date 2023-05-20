@@ -1576,6 +1576,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2047c6ded9c721764247e62cd3b03c09ffc529b2ba5b10ec482ae507a4a70160"
 
 [[package]]
+name = "tcyb"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "clap",
+ "config",
+ "const_format",
+ "dotenv",
+ "futures-util",
+ "hyper",
+ "jfs",
+ "log",
+ "regex",
+ "reqwest",
+ "serde",
+ "simple_logger",
+ "tokio",
+ "tokio-tungstenite",
+ "tonic",
+ "url",
+ "uuid",
+ "vstreamer_protos",
+ "webbrowser",
+]
+
+[[package]]
 name = "tempfile"
 version = "3.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1867,32 +1893,6 @@ dependencies = [
  "thiserror",
  "url",
  "utf-8",
-]
-
-[[package]]
-name = "twitch_chat_yomiage_bot"
-version = "0.1.0"
-dependencies = [
- "axum",
- "clap",
- "config",
- "const_format",
- "dotenv",
- "futures-util",
- "hyper",
- "jfs",
- "log",
- "regex",
- "reqwest",
- "serde",
- "simple_logger",
- "tokio",
- "tokio-tungstenite",
- "tonic",
- "url",
- "uuid",
- "vstreamer_protos",
- "webbrowser",
 ]
 
 [[package]]

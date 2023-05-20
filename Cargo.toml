@@ -1,5 +1,5 @@
 [package]
-name = "twitch_chat_yomiage_bot"
+name = "tcyb"
 version = "0.1.0"
 edition = "2021"
 

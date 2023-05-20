@@ -44,7 +44,11 @@ struct DBStore {
 #[tokio::main]
 async fn main() {
     dotenv::dotenv().ok();
-    env_logger::init();
+    simple_logger::SimpleLogger::new()
+        .env()
+        .with_local_timestamps()
+        .init()
+        .unwrap();
     let config = config::Config::builder()
         .add_source(
             config::Environment::with_prefix("cb")

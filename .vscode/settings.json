@@ -1,6 +1,7 @@
 {
     "editor.formatOnSave": true,
     "cSpell.words": [
+        "formatcp",
         "reqwest",
         "tungstenite",
         "tungstine",

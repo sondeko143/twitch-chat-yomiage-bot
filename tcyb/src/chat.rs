@@ -1,6 +1,5 @@
 use crate::api::get_tokens_by_refresh;
 use crate::DBStore;
-use core::fmt;
 use futures_util::{SinkExt, StreamExt};
 use jfs::Store;
 use log::{info, warn};
@@ -10,9 +9,7 @@ use tokio_tungstenite::{
     connect_async, tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream,
 };
 use url::Url;
-use vstreamer_protos::{
-    commander_client::CommanderClient, Command, Operation, OperationChain, OperationRoute,
-};
+use vstc;
 
 const CONNECT_ADDR: &str = "wss://irc-ws.chat.twitch.tv:443";
 const IRC_TIMEOUT_SECS: u64 = 60 * 10;
@@ -127,46 +124,6 @@ async fn send_chat_message_to_read(
     uri: &str,
     operations: &Vec<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let dst = uri.to_string();
-    let mut channel = CommanderClient::connect(dst).await?;
-    let op_routes = operations
-        .iter()
-        .map(convert_to_operation)
-        .filter(|o| o.is_ok())
-        .map(|o| OperationRoute {
-            operation: o.unwrap().into(),
-            remote: "".into(),
-        })
-        .collect::<Vec<_>>();
-    let c = tonic::Request::new(Command {
-        chains: vec![OperationChain {
-            operations: op_routes,
-        }],
-        text: String::from(chat_msg),
-        ..Command::default()
-    });
-    channel.process_command(c).await?;
+    vstc::process_command(uri, operations, chat_msg.to_string(), None, None, None).await?;
     Ok(())
-}
-
-#[derive(Debug, Clone)]
-struct ConvertError;
-impl fmt::Display for ConvertError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "invalid operation string")
-    }
-}
-impl std::error::Error for ConvertError {}
-
-fn convert_to_operation(op_str: &String) -> Result<Operation, ConvertError> {
-    return match op_str.as_str() {
-        "translate" => Ok(Operation::Translate),
-        "transl" => Ok(Operation::Translate),
-        "tts" => Ok(Operation::Tts),
-        "playback" => Ok(Operation::Playback),
-        "play" => Ok(Operation::Playback),
-        "subtitle" => Ok(Operation::Subtitle),
-        "sub" => Ok(Operation::Subtitle),
-        _ => Err(ConvertError),
-    };
 }

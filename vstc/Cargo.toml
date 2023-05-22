@@ -1,0 +1,16 @@
+[package]
+name = "vstc"
+version = "0.1.0"
+edition = "2021"
+description = "vstreamer client library"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tonic = "0.9.2"
+vstreamer_protos = { git = "https://github.com/sondeko143/vstreamer-protos", version = "0.1.0" }
+
+[dev-dependencies]
+mockall = "0.11.4"
+tokio = "1.28.1"
+tonic-reflection = "0.9.2"

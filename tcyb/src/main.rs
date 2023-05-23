@@ -3,7 +3,6 @@ mod auth;
 mod ban;
 mod chat;
 use clap::{Parser, Subcommand};
-use log::error;
 use serde::{Deserialize, Serialize};
 use std::{fmt::Debug, path::PathBuf};
 
@@ -42,7 +41,7 @@ struct DBStore {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv::dotenv().ok();
     simple_logger::SimpleLogger::new()
         .env()
@@ -65,63 +64,47 @@ async fn main() {
 
     match &args.command {
         Some(Commands::ReadChat {}) => {
-            if let Err(e) = chat::read_chat(
+            chat::read_chat(
                 &app_config.db_dir,
                 &app_config.db_name,
                 &app_config.username,
                 &app_config.channel,
                 &app_config.client_id,
                 &app_config.client_secret,
-                app_config.operations,
+                &app_config.operations,
                 &app_config.speech_address,
             )
-            .await
-            {
-                match e {
-                    err => error!("failed: {}", err),
-                }
-            }
+            .await?;
         }
         Some(Commands::AuthCode {}) => {
-            match auth::auth_code_grant(
+            auth::auth_code_grant(
                 &app_config.listen_address,
                 &app_config.db_dir,
                 &app_config.db_name,
                 &app_config.client_id,
                 &app_config.client_secret,
             )
-            .await
-            {
-                Ok(_) => (),
-                Err(err) => error!("failed: {}", err),
-            }
+            .await?;
         }
         Some(Commands::BanBots {}) => {
-            match ban::ban_bots(
+            ban::ban_bots(
                 &app_config.db_dir,
                 &app_config.db_name,
                 &app_config.username,
                 &app_config.client_id,
             )
-            .await
-            {
-                Ok(_) => (),
-                Err(err) => error!("failed: {}", err),
-            }
+            .await?;
         }
         Some(Commands::RefreshToken {}) => {
-            match auth::refresh_token_grant(
+            auth::refresh_token_grant(
                 &app_config.db_dir,
                 &app_config.db_name,
                 &app_config.client_id,
                 &app_config.client_secret,
             )
-            .await
-            {
-                Ok(_) => (),
-                Err(err) => error!("failed: {}", err),
-            }
+            .await?;
         }
         None => {}
     }
+    Ok(())
 }

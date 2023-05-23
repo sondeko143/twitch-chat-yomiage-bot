@@ -2,14 +2,12 @@ use axum::http::{HeaderMap, HeaderValue};
 use const_format::formatcp;
 use serde::{Deserialize, Serialize};
 
-const TWITCH_API_HOST: &'static str = "api.twitch.tv";
-const TWITCH_USERS_API_URL: &'static str = formatcp!("https://{}/helix/users", TWITCH_API_HOST);
-const TWITCH_BANS_API_URL: &'static str =
-    formatcp!("https://{}/helix/moderation/bans", TWITCH_API_HOST);
-const TWITCH_ID_HOST: &'static str = "id.twitch.tv";
-const TWITCH_OAUTH2_TOKEN_URL: &'static str = formatcp!("https://{}/oauth2/token", TWITCH_ID_HOST);
-pub const TWITCH_OAUTH2_AUTHZ_URL: &'static str =
-    formatcp!("https://{}/oauth2/authorize", TWITCH_ID_HOST);
+const TWITCH_API_HOST: &str = "api.twitch.tv";
+const TWITCH_USERS_API_URL: &str = formatcp!("https://{}/helix/users", TWITCH_API_HOST);
+const TWITCH_BANS_API_URL: &str = formatcp!("https://{}/helix/moderation/bans", TWITCH_API_HOST);
+const TWITCH_ID_HOST: &str = "id.twitch.tv";
+const TWITCH_OAUTH2_TOKEN_URL: &str = formatcp!("https://{}/oauth2/token", TWITCH_ID_HOST);
+pub const TWITCH_OAUTH2_AUTHZ_URL: &str = formatcp!("https://{}/oauth2/authorize", TWITCH_ID_HOST);
 
 #[derive(Serialize, Deserialize)]
 pub struct User {
@@ -147,5 +145,5 @@ fn auth_headers(access_token: &str, client_id: &str) -> HeaderMap {
             .unwrap(),
     );
     headers.append("Client-Id", client_id.parse::<HeaderValue>().unwrap());
-    return headers;
+    headers
 }

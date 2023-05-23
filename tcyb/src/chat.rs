@@ -4,24 +4,24 @@ use futures_util::{SinkExt, StreamExt};
 use jfs::Store;
 use log::{info, warn};
 use regex::Regex;
-use std::path::PathBuf;
+use std::path::Path;
 use tokio_tungstenite::{
     connect_async, tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream,
 };
 use url::Url;
-use vstc;
 
 const CONNECT_ADDR: &str = "wss://irc-ws.chat.twitch.tv:443";
 const IRC_TIMEOUT_SECS: u64 = 60 * 10;
 
+#[allow(clippy::too_many_arguments)]
 pub async fn read_chat(
-    db_dir: &PathBuf,
+    db_dir: &Path,
     db_name: &str,
     username: &str,
     channel: &str,
     client_id: &str,
     client_secret: &str,
-    operations: Vec<String>,
+    operations: &[String],
     address: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let chat_msg_pat = Regex::new(
@@ -61,7 +61,7 @@ pub async fn read_chat(
                         "{:?} says {:?} in #{:?}",
                         &caps["user"], &caps["chat_msg"], &caps["channel"]
                     );
-                    match send_chat_message_to_read(&caps["chat_msg"], address, &operations).await {
+                    match send_chat_message_to_read(&caps["chat_msg"], address, operations).await {
                         Ok(_) => (),
                         Err(err) => warn!("{:?}", err),
                     }
@@ -122,7 +122,7 @@ async fn connect_and_authorize(
 async fn send_chat_message_to_read(
     chat_msg: &str,
     uri: &str,
-    operations: &Vec<String>,
+    operations: &[String],
 ) -> Result<(), Box<dyn std::error::Error>> {
     vstc::process_command(uri, operations, chat_msg.to_string(), None, None, None).await?;
     Ok(())

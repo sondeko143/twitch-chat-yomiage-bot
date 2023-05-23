@@ -79,7 +79,7 @@ async fn get_bots_list() -> Result<Vec<String>, reqwest::Error> {
     let all_bots = all_bots_res?;
     let white_bots = white_bots_res?;
     let black_bot_names = all_bots
-        .split("\n")
+        .split('\n')
         .map(|n| n.to_string())
         .filter(|b| !white_bots.contains(b))
         .collect::<Vec<_>>();

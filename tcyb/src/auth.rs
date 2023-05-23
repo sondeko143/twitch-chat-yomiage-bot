@@ -12,11 +12,12 @@ use log::{info, warn};
 use serde::Deserialize;
 use std::borrow::Cow;
 use std::net::ToSocketAddrs;
+use std::path::Path;
 use std::{net::SocketAddr, path::PathBuf};
 
 pub async fn auth_code_grant(
     listen_addr: &str,
-    db_dir: &PathBuf,
+    db_dir: &Path,
     db_name: &str,
     client_id: &str,
     client_secret: &str,
@@ -24,7 +25,7 @@ pub async fn auth_code_grant(
     let server_t = tokio::spawn(start_server(
         listen_addr.to_socket_addrs()?.next().unwrap(),
         ServerState {
-            db_dir: db_dir.clone(),
+            db_dir: db_dir.to_path_buf(),
             db_name: db_name.to_string(),
             client_id: client_id.to_string(),
             client_secret: client_secret.to_string(),
@@ -41,7 +42,7 @@ pub async fn auth_code_grant(
 }
 
 pub async fn refresh_token_grant(
-    db_dir: &PathBuf,
+    db_dir: &Path,
     db_name: &str,
     client_id: &str,
     client_secret: &str,
@@ -143,12 +144,12 @@ async fn obtain_access_token(
     let (access_token, refresh_token) =
         get_tokens_by_code(redirect_uri, code, client_id, client_secret).await?;
     let db = Store::new(db_dir)?;
-    let obj = db.get::<DBStore>(&db_name)?;
+    let obj = db.get::<DBStore>(db_name)?;
     let updated_obj = DBStore {
         access_token,
         refresh_token,
         ..obj
     };
-    db.save_with_id(&updated_obj, &db_name)?;
+    db.save_with_id(&updated_obj, db_name)?;
     Ok(())
 }

@@ -11,3 +11,5 @@ clap = { version = "4.3.0", features = ["derive"] }
 tokio = "1.28.1"
 vstreamer_protos = { git = "https://github.com/sondeko143/vstreamer-protos", version = "0.1.0" }
 vstc = { path = "../vstc" }
+riff = "1.0.1"
+wav = "1.0.0"

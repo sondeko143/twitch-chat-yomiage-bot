@@ -1671,6 +1671,7 @@ checksum = "2047c6ded9c721764247e62cd3b03c09ffc529b2ba5b10ec482ae507a4a70160"
 name = "tcyb"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "axum",
  "clap",
  "config",
@@ -1679,11 +1680,13 @@ dependencies = [
  "futures-util",
  "hyper",
  "jfs",
+ "lazy_static",
  "log",
  "regex",
  "reqwest",
  "serde",
  "simple_logger",
+ "thiserror",
  "tokio",
  "tokio-tungstenite",
  "tonic",
@@ -2094,6 +2097,7 @@ name = "vstc"
 version = "0.1.0"
 dependencies = [
  "mockall",
+ "thiserror",
  "tokio",
  "tonic",
  "tonic-reflection",
@@ -2104,6 +2108,7 @@ dependencies = [
 name = "vstc_cli"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "clap",
  "riff",
  "tokio",

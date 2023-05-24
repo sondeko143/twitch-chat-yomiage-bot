@@ -4,11 +4,30 @@
 #![warn(clippy::all)]
 #![warn(clippy::pedantic)]
 
-use core::fmt;
+use thiserror::Error;
 use vstreamer_protos::{
     commander_client::CommanderClient, Command, Operation, OperationChain, OperationRoute,
     Response, Sound,
 };
+
+/// All possible errors returned by this library.
+#[derive(Error, Debug)]
+pub enum VstcError {
+    /// Invalid operation string given
+    #[error("invalid operation string {op_str:?}")]
+    OpConvertError {
+        /// given parameter
+        op_str: String,
+    },
+
+    /// Connection error
+    #[error(transparent)]
+    TransportError(#[from] tonic::transport::Error),
+
+    /// Send error
+    #[error(transparent)]
+    StatusError(#[from] tonic::Status),
+}
 
 /// Send the command to the channel.
 ///
@@ -24,7 +43,7 @@ pub async fn process_command(
     sound: Option<Sound>,
     file_path: Option<String>,
     filters: Option<Vec<String>>,
-) -> Result<Response, Box<dyn std::error::Error>> {
+) -> Result<Response, VstcError> {
     let dst = uri.to_string();
     let mut channel = CommanderClient::connect(dst).await?;
     let op_routes: Result<Vec<_>, _> = operations
@@ -52,18 +71,7 @@ pub async fn process_command(
     Ok(result.into_inner())
 }
 
-#[derive(Debug, Clone)]
-struct OpConvertError {
-    op_str: String,
-}
-impl fmt::Display for OpConvertError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "invalid operation string {}", self.op_str)
-    }
-}
-impl std::error::Error for OpConvertError {}
-
-fn convert_to_operation(op_str: &str) -> Result<Operation, OpConvertError> {
+fn convert_to_operation(op_str: &str) -> Result<Operation, VstcError> {
     match op_str {
         "transl" | "translate" => Ok(Operation::Translate),
         "tts" => Ok(Operation::Tts),
@@ -73,7 +81,7 @@ fn convert_to_operation(op_str: &str) -> Result<Operation, OpConvertError> {
         "reload" => Ok(Operation::Reload),
         "pause" => Ok(Operation::Pause),
         "resume" => Ok(Operation::Resume),
-        _ => Err(OpConvertError {
+        _ => Err(VstcError::OpConvertError {
             op_str: String::from(op_str),
         }),
     }

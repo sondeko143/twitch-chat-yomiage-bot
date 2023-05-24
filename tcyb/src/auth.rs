@@ -21,7 +21,7 @@ pub async fn auth_code_grant(
     db_name: &str,
     client_id: &str,
     client_secret: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> anyhow::Result<()> {
     let server_t = tokio::spawn(start_server(
         listen_addr.to_socket_addrs()?.next().unwrap(),
         ServerState {
@@ -46,7 +46,7 @@ pub async fn refresh_token_grant(
     db_name: &str,
     client_id: &str,
     client_secret: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> anyhow::Result<()> {
     let db = Store::new(db_dir)?;
     let obj = db.get::<DBStore>(db_name)?;
     let (access_token, refresh_token) =
@@ -140,7 +140,7 @@ async fn obtain_access_token(
     client_secret: &str,
     db_name: &str,
     db_dir: PathBuf,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> anyhow::Result<()> {
     let (access_token, refresh_token) =
         get_tokens_by_code(redirect_uri, code, client_id, client_secret).await?;
     let db = Store::new(db_dir)?;

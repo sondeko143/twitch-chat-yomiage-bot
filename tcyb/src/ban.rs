@@ -1,5 +1,6 @@
 use crate::api;
 use crate::DBStore;
+use anyhow::bail;
 use jfs::Store;
 use log::{info, warn};
 use std::path::PathBuf;
@@ -9,12 +10,12 @@ pub async fn ban_bots(
     db_name: &str,
     username: &str,
     client_id: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> anyhow::Result<()> {
     let db = Store::new(db_dir)?;
     let obj = db.get::<DBStore>(db_name)?;
     let my_user = api::get_user(username, &obj.access_token, client_id).await?;
     if my_user.data.is_empty() {
-        return Err("my user not found".into());
+        bail!("my user not found");
     }
     let my_user_id = &my_user.data[0].id;
     let updated_obj = DBStore {
@@ -43,7 +44,7 @@ pub async fn ban_bots(
                             if err.status() == Some(reqwest::StatusCode::BAD_REQUEST) {
                                 warn!("failed to ban {}: {}", user.data[0].id, err);
                             } else {
-                                return Err(err.into());
+                                bail!(err);
                             }
                         }
                     };
@@ -55,7 +56,7 @@ pub async fn ban_bots(
                 if err.status() == Some(reqwest::StatusCode::NOT_FOUND) {
                     warn!("username {}: {}", bot_name, err);
                 } else {
-                    return Err(err.into());
+                    bail!(err);
                 }
             }
         }

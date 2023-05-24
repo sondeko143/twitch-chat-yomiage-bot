@@ -13,3 +13,4 @@ vstreamer_protos = { git = "https://github.com/sondeko143/vstreamer-protos", ver
 vstc = { path = "../vstc" }
 riff = "1.0.1"
 wav = "1.0.0"
+anyhow = "1.0.71"

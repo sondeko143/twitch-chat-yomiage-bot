@@ -1,4 +1,5 @@
 mod sound;
+use anyhow::{Context, Result};
 use clap::Parser;
 use std::{fs::File, path::PathBuf};
 use vstreamer_protos::Sound;
@@ -29,14 +30,16 @@ struct Cli {
 }
 
 #[tokio::main(flavor = "current_thread")]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     let args = Cli::parse();
     let host = args.host.unwrap_or(String::from("localhost"));
     let port = args.port.unwrap_or(8080);
 
     let sound: Option<Sound> = match args.wav {
         Some(wav_path) => {
-            let mut wav_file = File::open(wav_path)?;
+            let filename = wav_path.as_path();
+            let mut wav_file =
+                File::open(filename).context(format!("unable to open '{:?}'", filename))?;
             let (header, data) = sound::read(&mut wav_file)?;
             Some(Sound {
                 data,

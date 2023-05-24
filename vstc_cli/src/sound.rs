@@ -15,30 +15,27 @@ where
 {
     let wav = verify_wav_file(reader)?;
 
-    for c in wav.iter(reader) {
-        if c.id().as_str() == "fmt " {
-            // Read header contents
+    let c = wav.iter(reader).find(|c| c.id().as_str() == "fmt ");
+    match c {
+        Some(c) => {
             let header_bytes = c.read_contents(reader)?;
             let header = Header::try_from(header_bytes.as_slice())
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
             // Return error if not using PCM
             match header.audio_format {
-                wav::WAV_FORMAT_PCM | wav::WAV_FORMAT_IEEE_FLOAT => return Ok(header),
-                _ => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        "Unsupported data format, data is not in uncompressed PCM format, aborting",
-                    ))
-                }
-            };
+                wav::WAV_FORMAT_PCM | wav::WAV_FORMAT_IEEE_FLOAT => Ok(header),
+                _ => Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "Unsupported data format, data is not in uncompressed PCM format, aborting",
+                )),
+            }
         }
+        None => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "RIFF data is missing the \"fmt \" chunk, aborting",
+        )),
     }
-
-    Err(io::Error::new(
-        io::ErrorKind::InvalidData,
-        "RIFF data is missing the \"fmt \" chunk, aborting",
-    ))
 }
 
 pub fn convert_format(header: &Header) -> i32 {
@@ -62,19 +59,14 @@ where
     R: Read + io::Seek,
 {
     let wav = verify_wav_file(reader)?;
-
-    for c in wav.iter(reader) {
-        if c.id().as_str() == "data" {
-            // Read data contents
-            let data_bytes = c.read_contents(reader)?;
-            return Ok(data_bytes);
-        }
+    let c = wav.iter(reader).find(|c| c.id().as_str() == "data");
+    match c {
+        Some(c) => c.read_contents(reader),
+        None => Err(io::Error::new(
+            io::ErrorKind::Other,
+            "Could not parse audio data",
+        )),
     }
-
-    Err(io::Error::new(
-        io::ErrorKind::Other,
-        "Could not parse audio data",
-    ))
 }
 
 fn verify_wav_file<R>(reader: &mut R) -> io::Result<riff::Chunk>

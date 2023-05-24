@@ -2,6 +2,7 @@ mod api;
 mod auth;
 mod ban;
 mod chat;
+use anyhow::Result;
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use std::{fmt::Debug, path::PathBuf};
@@ -41,13 +42,12 @@ struct DBStore {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     dotenv::dotenv().ok();
     simple_logger::SimpleLogger::new()
         .env()
         .with_local_timestamps()
-        .init()
-        .unwrap();
+        .init()?;
     let config = config::Config::builder()
         .add_source(
             config::Environment::with_prefix("cb")
@@ -57,9 +57,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .set_default("listen_address", "localhost:8000")
         .expect("this must not happen")
-        .build()
-        .unwrap();
-    let app_config: AppConfig = config.try_deserialize().unwrap();
+        .build()?;
+    let app_config: AppConfig = config.try_deserialize()?;
     let args = Cli::parse();
 
     match &args.command {

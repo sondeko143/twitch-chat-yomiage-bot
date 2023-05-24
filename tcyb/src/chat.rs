@@ -2,9 +2,11 @@ use crate::api::get_tokens_by_refresh;
 use crate::DBStore;
 use futures_util::{SinkExt, StreamExt};
 use jfs::Store;
+use lazy_static::lazy_static;
 use log::{info, warn};
 use regex::Regex;
 use std::path::Path;
+use thiserror::Error;
 use tokio_tungstenite::{
     connect_async, tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream,
 };
@@ -23,14 +25,7 @@ pub async fn read_chat(
     client_secret: &str,
     operations: &[String],
     address: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let chat_msg_pat = Regex::new(
-        r":(?P<user>.+)!.+@.+\.tmi\.twitch\.tv PRIVMSG #(?P<channel>.+) :(?P<chat_msg>.+)",
-    )
-    .unwrap();
-    let login_failed_pat =
-        Regex::new(r":tmi\.twitch\.tv NOTICE \* :Login authentication failed\s*").unwrap();
-    let ping_pat = Regex::new(r"PING :tmi\.twitch\.tv").unwrap();
+) -> anyhow::Result<()> {
     let url = url::Url::parse(CONNECT_ADDR)?;
     let db = Store::new(db_dir)?;
     loop {
@@ -53,43 +48,28 @@ pub async fn read_chat(
                     break;
                 }
             };
-            if msg.is_text() || msg.is_binary() {
-                let msg_str = msg.into_text()?;
-                if chat_msg_pat.is_match(&msg_str) {
-                    let caps = chat_msg_pat.captures(&msg_str).unwrap();
-                    info!(
-                        "{:?} says {:?} in #{:?}",
-                        &caps["user"], &caps["chat_msg"], &caps["channel"]
-                    );
-                    match send_chat_message_to_read(&caps["chat_msg"], address, operations).await {
-                        Ok(_) => (),
-                        Err(err) => warn!("{:?}", err),
+            if let Err(e) = process_message(msg, address, operations, &mut ws_stream).await {
+                match e {
+                    ChatError::LoginFailed => {
+                        warn!("login failed: try to refresh token and reconnect.");
+                        let (access_token, refresh_token) =
+                            get_tokens_by_refresh(&obj.refresh_token, client_id, client_secret)
+                                .await?;
+                        let updated_obj = DBStore {
+                            access_token,
+                            refresh_token,
+                            ..obj
+                        };
+                        db.save_with_id(&updated_obj, db_name)?;
+                        break;
                     }
-                } else if login_failed_pat.is_match(&msg_str) {
-                    info!("expired.");
-                    let (access_token, refresh_token) =
-                        get_tokens_by_refresh(&obj.refresh_token, client_id, client_secret).await?;
-                    let updated_obj = DBStore {
-                        access_token,
-                        refresh_token,
-                        ..obj
-                    };
-                    db.save_with_id(&updated_obj, db_name)?;
-                    break;
-                } else if ping_pat.is_match(&msg_str) {
-                    info!("respond to ping");
-                    match ws_stream
-                        .send(Message::Text(String::from("PONG :tmi.twitch.tv")))
-                        .await
-                    {
-                        Ok(_) => (),
-                        Err(err) => {
-                            warn!("{}", err);
-                            break;
-                        }
+                    ChatError::ConnectionError(e) => {
+                        warn!("connection error {}: try to reconnect.", e);
+                        break;
                     }
-                } else {
-                    info!("{}", msg_str);
+                    ChatError::VstcError(e) => {
+                        warn!("vstc error {}: ignore it.", e);
+                    }
                 }
             }
         }
@@ -119,11 +99,64 @@ async fn connect_and_authorize(
     Ok(ws_stream)
 }
 
+#[derive(Error, Debug)]
+enum ChatError {
+    #[error("login failed")]
+    LoginFailed,
+    #[error(transparent)]
+    VstcError(#[from] vstc::VstcError),
+    #[error(transparent)]
+    ConnectionError(#[from] tokio_tungstenite::tungstenite::Error),
+}
+
+async fn process_message(
+    msg: Message,
+    address: &str,
+    operations: &[String],
+    ws_stream: &mut WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
+) -> Result<(), ChatError> {
+    lazy_static! {
+        static ref CHAT_MSG_PTN: Regex = Regex::new(
+            r":(?P<user>.+)!.+@.+\.tmi\.twitch\.tv PRIVMSG #(?P<channel>.+) :(?P<chat_msg>.+)"
+        )
+        .unwrap();
+        static ref LOGIN_FAILED_PTN: Regex =
+            Regex::new(r":tmi\.twitch\.tv NOTICE \* :Login authentication failed\s*").unwrap();
+        static ref PING_PTN: Regex = Regex::new(r"PING :tmi\.twitch\.tv").unwrap();
+    }
+    if msg.is_text() || msg.is_binary() {
+        let msg_str = msg.into_text()?;
+        if CHAT_MSG_PTN.is_match(&msg_str) {
+            if let Some(caps) = CHAT_MSG_PTN.captures(&msg_str) {
+                info!(
+                    "{:?} says {:?} in #{:?}",
+                    &caps["user"], &caps["chat_msg"], &caps["channel"]
+                );
+                send_chat_message_to_read(&caps["chat_msg"], address, operations).await?;
+            }
+            Ok(())
+        } else if LOGIN_FAILED_PTN.is_match(&msg_str) {
+            Err(ChatError::LoginFailed)
+        } else if PING_PTN.is_match(&msg_str) {
+            info!("respond to ping");
+            ws_stream
+                .send(Message::Text(String::from("PONG :tmi.twitch.tv")))
+                .await?;
+            Ok(())
+        } else {
+            info!("{}", msg_str);
+            Ok(())
+        }
+    } else {
+        Ok(())
+    }
+}
+
 async fn send_chat_message_to_read(
     chat_msg: &str,
     uri: &str,
     operations: &[String],
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), vstc::VstcError> {
     vstc::process_command(uri, operations, chat_msg.to_string(), None, None, None).await?;
     Ok(())
 }

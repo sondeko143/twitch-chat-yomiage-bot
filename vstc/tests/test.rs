@@ -51,7 +51,7 @@ async fn send_minimal() {
 
     let result = process_command(
         format!("http://{ADDR_STR}").as_str(),
-        &vec![String::from("tts")],
+        &vec![String::from("o:/tts")],
         String::from(""),
         None,
         None,

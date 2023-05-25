@@ -7,7 +7,7 @@ use vstreamer_protos::Sound;
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
-    // Operations
+    // Operations ex: `o:/trans?t=ja&s=en`
     operations: Vec<String>,
     /// Text input
     #[arg(short, long)]

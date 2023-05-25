@@ -2101,6 +2101,7 @@ dependencies = [
  "tokio",
  "tonic",
  "tonic-reflection",
+ "url",
  "vstreamer_protos",
 ]
 
@@ -2120,7 +2121,7 @@ dependencies = [
 [[package]]
 name = "vstreamer_protos"
 version = "0.1.0"
-source = "git+https://github.com/sondeko143/vstreamer-protos#39b8523dadaffe935d81272c32bdb096bbb6e71f"
+source = "git+https://github.com/sondeko143/vstreamer-protos#ccf1a76d3e79fc419badb38d5b791b72fe946a61"
 dependencies = [
  "prost",
  "tonic",

@@ -4,10 +4,13 @@
 #![warn(clippy::all)]
 #![warn(clippy::pedantic)]
 
+use std::collections::HashMap;
+
 use thiserror::Error;
+use url::Url;
 use vstreamer_protos::{
-    commander_client::CommanderClient, Command, Operation, OperationChain, OperationRoute,
-    Response, Sound,
+    commander_client::CommanderClient, Command, Operand, Operation, OperationChain, OperationRoute,
+    Queries, Response, Sound,
 };
 
 /// All possible errors returned by this library.
@@ -27,6 +30,10 @@ pub enum VstcError {
     /// Send error
     #[error(transparent)]
     StatusError(#[from] tonic::Status),
+
+    /// Operation parse error
+    #[error(transparent)]
+    UrlError(#[from] url::ParseError),
 }
 
 /// Send the command to the channel.
@@ -50,29 +57,29 @@ pub async fn process_command(
         .iter()
         .map(String::as_ref)
         .map(convert_to_operation)
-        .map(|r| match r {
-            Ok(o) => Ok(OperationRoute {
-                operation: o.into(),
-                remote: String::new(),
-            }),
-            Err(e) => Err(e),
-        })
         .collect();
-    let c = tonic::Request::new(Command {
-        chains: vec![OperationChain {
-            operations: op_routes?,
-        }],
+    let operand = Operand {
         text,
         sound,
         file_path: file_path.unwrap_or_default(),
         filters: filters.unwrap_or_default(),
+    };
+    let c = tonic::Request::new(Command {
+        chains: vec![OperationChain {
+            operations: op_routes?,
+        }],
+        operand: Some(operand),
     });
     let result = channel.process_command(c).await?;
     Ok(result.into_inner())
 }
 
-fn convert_to_operation(op_str: &str) -> Result<Operation, VstcError> {
-    match op_str {
+fn convert_to_operation(op_str: &str) -> Result<OperationRoute, VstcError> {
+    let parsed = Url::parse(op_str)?;
+    let hash_query: HashMap<_, _> = parsed.query_pairs().into_owned().collect();
+    let target_language_code = hash_query.get("t");
+    let source_language_code = hash_query.get("s");
+    let operation = match parsed.path().strip_prefix('/').unwrap_or_default() {
         "transl" | "translate" => Ok(Operation::Translate),
         "tts" => Ok(Operation::Tts),
         "play" | "playback" => Ok(Operation::Playback),
@@ -84,5 +91,26 @@ fn convert_to_operation(op_str: &str) -> Result<Operation, VstcError> {
         _ => Err(VstcError::OpConvertError {
             op_str: String::from(op_str),
         }),
+    };
+    let queries = Queries {
+        source_language_code: source_language_code.unwrap_or(&String::new()).to_string(),
+        target_language_code: target_language_code.unwrap_or(&String::new()).to_string(),
+    };
+    Ok(OperationRoute {
+        operation: operation?.into(),
+        remote: String::new(),
+        queries: Some(queries),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn convert_no_host() {
+        let result = convert_to_operation("o:/transl?t=en&s=ja").unwrap();
+        let qs = result.queries.unwrap();
+        assert_eq!(qs.source_language_code, "ja");
+        assert_eq!(qs.target_language_code, "en");
     }
 }

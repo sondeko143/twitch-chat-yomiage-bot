@@ -10,7 +10,7 @@ use thiserror::Error;
 use url::Url;
 use vstreamer_protos::{
     commander_client::CommanderClient, Command, Operand, Operation, OperationChain, OperationRoute,
-    Queries, Response, Sound,
+    Response, Sound,
 };
 
 /// All possible errors returned by this library.
@@ -77,8 +77,6 @@ pub async fn process_command(
 fn convert_to_operation(op_str: &str) -> Result<OperationRoute, VstcError> {
     let parsed = Url::parse(op_str)?;
     let hash_query: HashMap<_, _> = parsed.query_pairs().into_owned().collect();
-    let target_language_code = hash_query.get("t");
-    let source_language_code = hash_query.get("s");
     let operation = match parsed.path().strip_prefix('/').unwrap_or_default() {
         "transl" | "translate" => Ok(Operation::Translate),
         "tts" => Ok(Operation::Tts),
@@ -92,14 +90,10 @@ fn convert_to_operation(op_str: &str) -> Result<OperationRoute, VstcError> {
             op_str: String::from(op_str),
         }),
     };
-    let queries = Queries {
-        source_language_code: source_language_code.unwrap_or(&String::new()).to_string(),
-        target_language_code: target_language_code.unwrap_or(&String::new()).to_string(),
-    };
     Ok(OperationRoute {
         operation: operation?.into(),
         remote: String::new(),
-        queries: Some(queries),
+        queries: hash_query,
     })
 }
 
@@ -109,8 +103,8 @@ mod tests {
     #[test]
     fn convert_no_host() {
         let result = convert_to_operation("o:/transl?t=en&s=ja").unwrap();
-        let qs = result.queries.unwrap();
-        assert_eq!(qs.source_language_code, "ja");
-        assert_eq!(qs.target_language_code, "en");
+        let qs = result.queries;
+        assert_eq!(qs["s"], "ja");
+        assert_eq!(qs["t"], "en");
     }
 }

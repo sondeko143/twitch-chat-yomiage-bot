@@ -2121,7 +2121,7 @@ dependencies = [
 [[package]]
 name = "vstreamer_protos"
 version = "0.1.0"
-source = "git+https://github.com/sondeko143/vstreamer-protos#ccf1a76d3e79fc419badb38d5b791b72fe946a61"
+source = "git+https://github.com/sondeko143/vstreamer-protos#bf5243c58bfb1c5e56f0d85a3e4eeedbed77258d"
 dependencies = [
  "prost",
  "tonic",

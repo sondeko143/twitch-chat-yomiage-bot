@@ -43,6 +43,7 @@ pub enum VstcError {
 /// This function fails under the following circumstances:
 ///
 /// * Any error occurring during connecting or sending to the target uri.
+/// * The given operations' strings can not convert to.
 pub async fn process_command(
     uri: &str,
     operations: &[String],
@@ -90,9 +91,20 @@ fn convert_to_operation(op_str: &str) -> Result<OperationRoute, VstcError> {
             op_str: String::from(op_str),
         }),
     };
+    let remote = match parsed.host_str() {
+        Some(host) => format!(
+            "//{}{}",
+            host,
+            match parsed.port_or_known_default() {
+                Some(port) => format!(":{}", port),
+                None => String::new(),
+            }
+        ),
+        None => String::new(),
+    };
     Ok(OperationRoute {
         operation: operation?.into(),
-        remote: String::new(),
+        remote,
         queries: hash_query,
     })
 }
@@ -101,8 +113,25 @@ fn convert_to_operation(op_str: &str) -> Result<OperationRoute, VstcError> {
 mod tests {
     use super::*;
     #[test]
-    fn convert_no_host() {
+    fn convert_without_host() {
         let result = convert_to_operation("o:/transl?t=en&s=ja").unwrap();
+        let qs = result.queries;
+        assert_eq!(qs["s"], "ja");
+        assert_eq!(qs["t"], "en");
+    }
+
+    #[test]
+    fn convert_with_host() {
+        let result = convert_to_operation("o://localhost:8080/transl?t=en&s=ja").unwrap();
+        let remote = result.remote;
+        assert_eq!(remote, "//localhost:8080");
+        let qs = result.queries;
+        assert_eq!(qs["s"], "ja");
+        assert_eq!(qs["t"], "en");
+
+        let result = convert_to_operation("https://localhost/transl?t=en&s=ja").unwrap();
+        let remote = result.remote;
+        assert_eq!(remote, "//localhost:443");
         let qs = result.queries;
         assert_eq!(qs["s"], "ja");
         assert_eq!(qs["t"], "en");

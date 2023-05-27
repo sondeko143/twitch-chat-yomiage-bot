@@ -87,6 +87,7 @@ fn convert_to_operation(op_str: &str) -> Result<OperationRoute, VstcError> {
         "reload" => Ok(Operation::Reload),
         "pause" => Ok(Operation::Pause),
         "resume" => Ok(Operation::Resume),
+        "forward" | "fwd" => Ok(Operation::Forward),
         _ => Err(VstcError::OpConvertError {
             op_str: String::from(op_str),
         }),

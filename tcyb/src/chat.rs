@@ -115,37 +115,33 @@ async fn process_message(
     operations: &[String],
     ws_stream: &mut WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
 ) -> Result<(), ChatError> {
-    lazy_static! {
-        static ref CHAT_MSG_PTN: Regex = Regex::new(
-            r":(?P<user>.+)!.+@.+\.tmi\.twitch\.tv PRIVMSG #(?P<channel>.+) :(?P<chat_msg>.+)"
-        )
-        .unwrap();
-        static ref LOGIN_FAILED_PTN: Regex =
-            Regex::new(r":tmi\.twitch\.tv NOTICE \* :Login authentication failed\s*").unwrap();
-        static ref PING_PTN: Regex = Regex::new(r"PING :tmi\.twitch\.tv").unwrap();
-    }
     if msg.is_text() || msg.is_binary() {
         let msg_str = msg.into_text()?;
-        if CHAT_MSG_PTN.is_match(&msg_str) {
-            if let Some(caps) = CHAT_MSG_PTN.captures(&msg_str) {
+        let irc_message = parse_message(&msg_str);
+        match irc_message.kind {
+            IrcMessageKind::Chat => {
+                let chat_msg = irc_message.chat_msg.unwrap_or_default();
                 info!(
                     "{:?} says {:?} in #{:?}",
-                    &caps["user"], &caps["chat_msg"], &caps["channel"]
+                    irc_message.user.unwrap_or_default().as_str(),
+                    chat_msg.as_str(),
+                    irc_message.channel.unwrap_or_default().as_str(),
                 );
-                send_chat_message_to_read(&caps["chat_msg"], address, operations).await?;
+                send_chat_message_to_read(chat_msg.as_str(), address, operations).await?;
+                Ok(())
             }
-            Ok(())
-        } else if LOGIN_FAILED_PTN.is_match(&msg_str) {
-            Err(ChatError::LoginFailed)
-        } else if PING_PTN.is_match(&msg_str) {
-            info!("respond to ping");
-            ws_stream
-                .send(Message::Text(String::from("PONG :tmi.twitch.tv")))
-                .await?;
-            Ok(())
-        } else {
-            info!("{}", msg_str);
-            Ok(())
+            IrcMessageKind::LoginFailed => Err(ChatError::LoginFailed),
+            IrcMessageKind::Ping => {
+                info!("respond to ping");
+                ws_stream
+                    .send(Message::Text(String::from("PONG :tmi.twitch.tv")))
+                    .await?;
+                Ok(())
+            }
+            _ => {
+                info!("{}", msg_str);
+                Ok(())
+            }
         }
     } else {
         Ok(())
@@ -159,4 +155,69 @@ async fn send_chat_message_to_read(
 ) -> Result<(), vstc::VstcError> {
     vstc::process_command(uri, operations, chat_msg.to_string(), None, None, None).await?;
     Ok(())
+}
+
+enum IrcMessageKind {
+    Chat,
+    LoginFailed,
+    Ping,
+    Unknown,
+}
+impl Default for IrcMessageKind {
+    fn default() -> Self {
+        IrcMessageKind::Unknown
+    }
+}
+
+#[derive(Default)]
+struct IrcMessage {
+    kind: IrcMessageKind,
+    chat_msg: Option<String>,
+    user: Option<String>,
+    channel: Option<String>,
+}
+
+fn parse_message(msg_str: &str) -> IrcMessage {
+    lazy_static! {
+        static ref CHAT_MSG_PTN: Regex = Regex::new(
+            r":(?P<user>.+)!.+@.+\.tmi\.twitch\.tv PRIVMSG #(?P<channel>[^:]+) :(?P<chat_msg>.+)"
+        )
+        .unwrap();
+        static ref LOGIN_FAILED_PTN: Regex =
+            Regex::new(r":tmi\.twitch\.tv NOTICE \* :Login authentication failed\s*").unwrap();
+        static ref PING_PTN: Regex = Regex::new(r"PING :tmi\.twitch\.tv").unwrap();
+    }
+    if CHAT_MSG_PTN.is_match(&msg_str) {
+        if let Some(caps) = CHAT_MSG_PTN.captures(&msg_str) {
+            return IrcMessage {
+                kind: IrcMessageKind::Chat,
+                chat_msg: Some(caps["chat_msg"].into()),
+                channel: Some(caps["channel"].into()),
+                user: Some(caps["user"].into()),
+            };
+        }
+    } else if LOGIN_FAILED_PTN.is_match(&msg_str) {
+        return IrcMessage {
+            kind: IrcMessageKind::LoginFailed,
+            ..Default::default()
+        };
+    } else if PING_PTN.is_match(&msg_str) {
+        return IrcMessage {
+            kind: IrcMessageKind::Ping,
+            ..Default::default()
+        };
+    }
+    IrcMessage::default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn parse_smile_emoji_message() {
+        let message = parse_message(
+            ":testuser!somthing@something.tmi.twitch.tv PRIVMSG #somechannel :hello :)",
+        );
+        assert_eq!(message.chat_msg.unwrap().as_str(), "hello :)");
+    }
 }

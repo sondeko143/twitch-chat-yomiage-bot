@@ -3,6 +3,7 @@ use crate::DBStore;
 use anyhow::bail;
 use jfs::Store;
 use log::{info, warn};
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 pub async fn ban_bots(
@@ -64,13 +65,26 @@ pub async fn ban_bots(
     Ok(())
 }
 
+#[derive(Serialize, Deserialize)]
+struct BotInfo {
+    name: String,
+    number: i64,
+    time: i64,
+}
+
+#[derive(Serialize, Deserialize)]
+struct BotList {
+    bots: Vec<BotInfo>,
+    _total: i64,
+}
+
 async fn get_bots_list() -> Result<Vec<String>, reqwest::Error> {
     let (all_bots_res, white_bots_res) = tokio::join!(
         reqwest::Client::new()
-            .get("https://raw.githubusercontent.com/arrowgent/Twitchtv-Bots-List/main/list.txt")
+            .get("https://api.twitchinsights.net/v1/bots/all")
             .send()
             .await?
-            .text(),
+            .json::<BotList>(),
         reqwest::Client::new()
             .get("https://mreliasen.github.io/twitch-bot-list/whitelist.json")
             .send()
@@ -80,8 +94,9 @@ async fn get_bots_list() -> Result<Vec<String>, reqwest::Error> {
     let all_bots = all_bots_res?;
     let white_bots = white_bots_res?;
     let black_bot_names = all_bots
-        .split('\n')
-        .map(|n| n.to_string())
+        .bots
+        .iter()
+        .map(|n| n.name.clone())
         .filter(|b| !white_bots.contains(b))
         .collect::<Vec<_>>();
     Ok(black_bot_names)

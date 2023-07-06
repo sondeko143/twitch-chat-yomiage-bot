@@ -53,6 +53,9 @@ async fn game_ids(name: &str, access_token: &str, client_id: &str) -> anyhow::Re
     if games.is_empty() {
         bail!("Not found {}", name)
     }
-    info!("{}: {}", games[0].game, games[0].name);
-    Ok(games[0].game)
+    info!(
+        "{}: {}, cover: {}",
+        games[0].id, games[0].name, games[0].cover
+    );
+    Ok(games[0].id)
 }

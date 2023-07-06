@@ -9,7 +9,7 @@ const TWITCH_BANS_API_URL: &str = formatcp!("https://{}/helix/moderation/bans", 
 const TWITCH_ID_HOST: &str = "id.twitch.tv";
 const TWITCH_OAUTH2_TOKEN_URL: &str = formatcp!("https://{}/oauth2/token", TWITCH_ID_HOST);
 pub const TWITCH_OAUTH2_AUTHZ_URL: &str = formatcp!("https://{}/oauth2/authorize", TWITCH_ID_HOST);
-const IGDB_SEARCH_API_URL: &str = formatcp!("https://{}/v4/search", IGDB_API_HOST);
+const IGDB_GAME_API_URL: &str = formatcp!("https://{}/v4/games", IGDB_API_HOST);
 const IGDB_COVER_API_URL: &str = formatcp!("https://{}/v4/covers", IGDB_API_HOST);
 
 #[derive(Serialize, Deserialize)]
@@ -169,7 +169,7 @@ pub async fn ban_user(
 #[derive(Serialize, Deserialize)]
 pub struct SearchGame {
     pub id: i64,
-    pub game: i64,
+    pub cover: i64,
     pub name: String,
 }
 
@@ -179,9 +179,12 @@ pub async fn search_game(
     name: &str,
 ) -> Result<Vec<SearchGame>, reqwest::Error> {
     let headers = auth_headers(access_token, client_id);
-    let query = format!("fields game,name; search \"{}\"; limit 1;", name);
+    let query = format!(
+        "fields id,name,cover; search \"{}\"; where cover != null; limit 1;",
+        name
+    );
     let res: Vec<SearchGame> = reqwest::Client::new()
-        .post(IGDB_SEARCH_API_URL)
+        .post(IGDB_GAME_API_URL)
         .headers(headers)
         .body(query)
         .send()

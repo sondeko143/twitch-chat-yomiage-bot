@@ -157,16 +157,13 @@ async fn send_chat_message_to_read(
     Ok(())
 }
 
+#[derive(Default)]
 enum IrcMessageKind {
     Chat,
     LoginFailed,
     Ping,
+    #[default]
     Unknown,
-}
-impl Default for IrcMessageKind {
-    fn default() -> Self {
-        IrcMessageKind::Unknown
-    }
 }
 
 #[derive(Default)]
@@ -187,8 +184,8 @@ fn parse_message(msg_str: &str) -> IrcMessage {
             Regex::new(r":tmi\.twitch\.tv NOTICE \* :Login authentication failed\s*").unwrap();
         static ref PING_PTN: Regex = Regex::new(r"PING :tmi\.twitch\.tv").unwrap();
     }
-    if CHAT_MSG_PTN.is_match(&msg_str) {
-        if let Some(caps) = CHAT_MSG_PTN.captures(&msg_str) {
+    if CHAT_MSG_PTN.is_match(msg_str) {
+        if let Some(caps) = CHAT_MSG_PTN.captures(msg_str) {
             return IrcMessage {
                 kind: IrcMessageKind::Chat,
                 chat_msg: Some(caps["chat_msg"].into()),
@@ -196,12 +193,12 @@ fn parse_message(msg_str: &str) -> IrcMessage {
                 user: Some(caps["user"].into()),
             };
         }
-    } else if LOGIN_FAILED_PTN.is_match(&msg_str) {
+    } else if LOGIN_FAILED_PTN.is_match(msg_str) {
         return IrcMessage {
             kind: IrcMessageKind::LoginFailed,
             ..Default::default()
         };
-    } else if PING_PTN.is_match(&msg_str) {
+    } else if PING_PTN.is_match(msg_str) {
         return IrcMessage {
             kind: IrcMessageKind::Ping,
             ..Default::default()

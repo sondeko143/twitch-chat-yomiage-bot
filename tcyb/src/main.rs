@@ -1,4 +1,5 @@
 mod api;
+mod artwork;
 mod auth;
 mod ban;
 mod chat;
@@ -19,6 +20,7 @@ enum Commands {
     AuthCode {},
     BanBots {},
     RefreshToken {},
+    GetArtwork { names: Vec<String> },
 }
 
 #[derive(Debug, Default, Deserialize, PartialEq, Eq, Clone)]
@@ -102,6 +104,9 @@ async fn main() -> Result<()> {
                 &app_config.client_secret,
             )
             .await?;
+        }
+        Some(Commands::GetArtwork { names }) => {
+            artwork::get_artwork(&app_config.client_id, &app_config.client_secret, names).await?;
         }
         None => {}
     }

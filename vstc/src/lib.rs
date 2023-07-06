@@ -97,7 +97,7 @@ fn convert_to_operation(op_str: &str) -> Result<OperationRoute, VstcError> {
             "//{}{}",
             host,
             match parsed.port_or_known_default() {
-                Some(port) => format!(":{}", port),
+                Some(port) => format!(":{port}"),
                 None => String::new(),
             }
         ),

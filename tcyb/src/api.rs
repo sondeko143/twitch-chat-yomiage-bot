@@ -6,6 +6,7 @@ const TWITCH_API_HOST: &str = "api.twitch.tv";
 const IGDB_API_HOST: &str = "api.igdb.com";
 const TWITCH_USERS_API_URL: &str = formatcp!("https://{}/helix/users", TWITCH_API_HOST);
 const TWITCH_BANS_API_URL: &str = formatcp!("https://{}/helix/moderation/bans", TWITCH_API_HOST);
+const TWITCH_CHATTERS_API_URL: &str = formatcp!("https://{}/helix/chat/chatters", TWITCH_API_HOST);
 const TWITCH_ID_HOST: &str = "id.twitch.tv";
 const TWITCH_OAUTH2_TOKEN_URL: &str = formatcp!("https://{}/oauth2/token", TWITCH_ID_HOST);
 pub const TWITCH_OAUTH2_AUTHZ_URL: &str = formatcp!("https://{}/oauth2/authorize", TWITCH_ID_HOST);
@@ -162,6 +163,39 @@ pub async fn ban_user(
         .await?
         .error_for_status()?
         .text()
+        .await?;
+    Ok(res)
+}
+
+#[derive(Deserialize, Serialize)]
+pub struct Chatters {
+    pub data: Vec<Chatter>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Chatter {
+    pub user_id: String,
+    pub user_login: String,
+    pub user_name: String,
+}
+
+pub async fn get_chatters(
+    operator_id: &str,
+    access_token: &str,
+    client_id: &str,
+) -> Result<Chatters, reqwest::Error> {
+    let headers = auth_headers(access_token, client_id);
+    let res: Chatters = reqwest::Client::new()
+        .post(TWITCH_CHATTERS_API_URL)
+        .headers(headers)
+        .query(&[
+            ("broadcaster_id", operator_id),
+            ("moderator_id", operator_id),
+        ])
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
         .await?;
     Ok(res)
 }

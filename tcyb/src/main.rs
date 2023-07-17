@@ -3,6 +3,7 @@ mod artwork;
 mod auth;
 mod ban;
 mod chat;
+mod chatroom;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
@@ -21,6 +22,7 @@ enum Commands {
     BanBots {},
     RefreshToken {},
     GetArtwork { names: Vec<String> },
+    ShowChatters {},
 }
 
 #[derive(Debug, Default, Deserialize, PartialEq, Eq, Clone)]
@@ -107,6 +109,15 @@ async fn main() -> Result<()> {
         }
         Some(Commands::GetArtwork { names }) => {
             artwork::get_artwork(&app_config.client_id, &app_config.client_secret, names).await?;
+        }
+        Some(Commands::ShowChatters {}) => {
+            chatroom::chatters(
+                &app_config.db_dir,
+                &app_config.db_name,
+                &app_config.username,
+                &app_config.client_id,
+            )
+            .await?;
         }
         None => {}
     }

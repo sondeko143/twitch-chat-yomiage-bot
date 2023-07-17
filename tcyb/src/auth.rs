@@ -89,7 +89,7 @@ async fn auth(State(state): State<ServerState>) -> impl IntoResponse {
         ("response_type", "code"),
         (
             "scope",
-            "chat:read moderator:manage:banned_users channel:moderate",
+            "chat:read moderator:manage:banned_users channel:moderate moderator:read:chatters",
         ),
         ("force_verify", "true"),
         ("state", state_id),

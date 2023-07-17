@@ -186,7 +186,7 @@ pub async fn get_chatters(
 ) -> Result<Chatters, reqwest::Error> {
     let headers = auth_headers(access_token, client_id);
     let res: Chatters = reqwest::Client::new()
-        .post(TWITCH_CHATTERS_API_URL)
+        .get(TWITCH_CHATTERS_API_URL)
         .headers(headers)
         .query(&[
             ("broadcaster_id", operator_id),

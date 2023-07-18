@@ -1,5 +1,6 @@
 use crate::{api, DBStore};
 use anyhow::bail;
+use chrono;
 use jfs::Store;
 use log::warn;
 use std::path::Path;
@@ -34,7 +35,9 @@ pub async fn chatters(
         let obj = db.get::<DBStore>(db_name)?;
         match api::get_chatters(&user_id, &obj.access_token, client_id).await {
             Ok(res) => {
-                res.data.iter().for_each(|c| println!("{}", c.user_name));
+                res.data
+                    .iter()
+                    .for_each(|c| println!("{:?},{}", chrono::offset::Local::now(), c.user_name));
                 break;
             }
             Err(err) => {

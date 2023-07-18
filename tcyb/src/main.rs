@@ -3,7 +3,7 @@ mod artwork;
 mod auth;
 mod ban;
 mod chat;
-mod chatroom;
+mod irc;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
@@ -67,7 +67,7 @@ async fn main() -> Result<()> {
 
     match &args.command {
         Some(Commands::ReadChat {}) => {
-            chat::read_chat(
+            irc::read_chat(
                 &app_config.db_dir,
                 &app_config.db_name,
                 &app_config.username,
@@ -111,11 +111,12 @@ async fn main() -> Result<()> {
             artwork::get_artwork(&app_config.client_id, &app_config.client_secret, names).await?;
         }
         Some(Commands::ShowChatters {}) => {
-            chatroom::chatters(
+            chat::chatters(
                 &app_config.db_dir,
                 &app_config.db_name,
                 &app_config.username,
                 &app_config.client_id,
+                &app_config.client_secret,
             )
             .await?;
         }

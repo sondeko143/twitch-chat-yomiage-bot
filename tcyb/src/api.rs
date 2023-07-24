@@ -7,6 +7,8 @@ const IGDB_API_HOST: &str = "api.igdb.com";
 const TWITCH_USERS_API_URL: &str = formatcp!("https://{}/helix/users", TWITCH_API_HOST);
 const TWITCH_BANS_API_URL: &str = formatcp!("https://{}/helix/moderation/bans", TWITCH_API_HOST);
 const TWITCH_CHATTERS_API_URL: &str = formatcp!("https://{}/helix/chat/chatters", TWITCH_API_HOST);
+const TWITCH_SUB_EVENT_API_URL: &str =
+    formatcp!("https://{}/helix/eventsub/subscriptions", TWITCH_API_HOST);
 const TWITCH_ID_HOST: &str = "id.twitch.tv";
 const TWITCH_OAUTH2_TOKEN_URL: &str = formatcp!("https://{}/oauth2/token", TWITCH_ID_HOST);
 pub const TWITCH_OAUTH2_AUTHZ_URL: &str = formatcp!("https://{}/oauth2/authorize", TWITCH_ID_HOST);
@@ -196,6 +198,60 @@ pub async fn get_chatters(
         .await?
         .error_for_status()?
         .json()
+        .await?;
+    Ok(res)
+}
+
+#[derive(Deserialize, Serialize)]
+struct EventSubSubscription<'a> {
+    #[serde(rename = "type")]
+    type_: &'a str,
+    version: &'a str,
+    #[serde(borrow)]
+    condition: EventSubCondition<'a>,
+    #[serde(borrow)]
+    transport: EventSubTransport<'a>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct EventSubCondition<'a> {
+    broadcaster_user_id: &'a str,
+    moderator_user_id: &'a str,
+}
+
+#[derive(Serialize, Deserialize)]
+struct EventSubTransport<'a> {
+    method: &'a str,
+    session_id: &'a str,
+}
+
+pub async fn sub_event(
+    operator_id: &str,
+    session_id: &str,
+    access_token: &str,
+    client_id: &str,
+) -> Result<String, reqwest::Error> {
+    let headers = auth_headers(access_token, client_id);
+    let sub = EventSubSubscription {
+        type_: "channel.follow",
+        version: "2",
+        condition: EventSubCondition {
+            broadcaster_user_id: operator_id,
+            moderator_user_id: operator_id,
+        },
+        transport: EventSubTransport {
+            method: "websocket",
+            session_id,
+        },
+    };
+    let res = reqwest::Client::new()
+        .post(TWITCH_SUB_EVENT_API_URL)
+        .headers(headers)
+        .json(&sub)
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
         .await?;
     Ok(res)
 }

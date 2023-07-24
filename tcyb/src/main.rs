@@ -3,14 +3,20 @@ mod artwork;
 mod auth;
 mod ban;
 mod chat;
+mod eventsub;
 mod irc;
+mod settings;
+mod store;
+mod yomiage;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use serde::{Deserialize, Serialize};
-use std::{fmt::Debug, path::PathBuf};
+use settings::Settings;
+use std::path::PathBuf;
 
 #[derive(Parser)]
 struct Cli {
+    #[arg(short, long)]
+    config: Option<PathBuf>,
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -25,98 +31,73 @@ enum Commands {
     ShowChatters {},
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Eq, Clone)]
-struct AppConfig {
-    client_id: String,
-    client_secret: String,
-    channel: String,
-    username: String,
-    speech_address: String,
-    operations: Vec<String>,
-    listen_address: String,
-    db_dir: PathBuf,
-    db_name: String,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-struct DBStore {
-    access_token: String,
-    refresh_token: String,
-    user_id: String,
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv::dotenv().ok();
+    let args = Cli::parse();
+    let mut config_builder = config::Config::builder()
+        .set_default("listen_address", "localhost:8000")?
+        .set_default("greeting_template", "user_name is now following!")?;
+    config_builder = config_builder.add_source(
+        config::Environment::with_prefix("cb")
+            .try_parsing(true)
+            .list_separator(",")
+            .with_list_parse_key("operations"),
+    );
+    if args.config.is_some() {
+        config_builder = config_builder.add_source(config::File::with_name(
+            args.config.unwrap().to_str().unwrap(),
+        ));
+    }
+    let config = config_builder.build()?;
+    let settings: Settings = config.try_deserialize()?;
     simple_logger::SimpleLogger::new()
         .env()
         .with_local_timestamps()
         .init()?;
-    let config = config::Config::builder()
-        .add_source(
-            config::Environment::with_prefix("cb")
-                .try_parsing(true)
-                .list_separator(",")
-                .with_list_parse_key("operations"),
-        )
-        .set_default("listen_address", "localhost:8000")
-        .expect("this must not happen")
-        .build()?;
-    let app_config: AppConfig = config.try_deserialize()?;
-    let args = Cli::parse();
 
     match &args.command {
         Some(Commands::ReadChat {}) => {
-            irc::read_chat(
-                &app_config.db_dir,
-                &app_config.db_name,
-                &app_config.username,
-                &app_config.channel,
-                &app_config.client_id,
-                &app_config.client_secret,
-                &app_config.operations,
-                &app_config.speech_address,
-            )
-            .await?;
+            yomiage::yomiage(&settings).await?;
         }
         Some(Commands::AuthCode {}) => {
             auth::auth_code_grant(
-                &app_config.listen_address,
-                &app_config.db_dir,
-                &app_config.db_name,
-                &app_config.client_id,
-                &app_config.client_secret,
+                &settings.listen_address,
+                &settings.db_dir,
+                &settings.db_name,
+                &settings.client_id,
+                &settings.client_secret,
             )
             .await?;
         }
         Some(Commands::BanBots {}) => {
             ban::ban_bots(
-                &app_config.db_dir,
-                &app_config.db_name,
-                &app_config.username,
-                &app_config.client_id,
+                &settings.db_dir,
+                &settings.db_name,
+                &settings.username,
+                &settings.client_id,
             )
             .await?;
         }
         Some(Commands::RefreshToken {}) => {
             auth::refresh_token_grant(
-                &app_config.db_dir,
-                &app_config.db_name,
-                &app_config.client_id,
-                &app_config.client_secret,
+                &settings.db_dir,
+                &settings.db_name,
+                &settings.client_id,
+                &settings.client_secret,
             )
             .await?;
         }
         Some(Commands::GetArtwork { names }) => {
-            artwork::get_artwork(&app_config.client_id, &app_config.client_secret, names).await?;
+            artwork::get_artwork(&settings.client_id, &settings.client_secret, names).await?;
         }
         Some(Commands::ShowChatters {}) => {
             chat::chatters(
-                &app_config.db_dir,
-                &app_config.db_name,
-                &app_config.username,
-                &app_config.client_id,
-                &app_config.client_secret,
+                &settings.db_dir,
+                &settings.db_name,
+                &settings.username,
+                &settings.client_id,
+                &settings.client_secret,
             )
             .await?;
         }

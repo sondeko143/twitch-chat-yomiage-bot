@@ -1,39 +1,28 @@
 use crate::api;
-use crate::DBStore;
+use crate::store::Store;
 use anyhow::bail;
-use jfs::Store;
 use log::{info, warn};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::Path;
 
 pub async fn ban_bots(
-    db_dir: &PathBuf,
+    db_dir: &Path,
     db_name: &str,
     username: &str,
     client_id: &str,
 ) -> anyhow::Result<()> {
-    let db = Store::new(db_dir)?;
-    let obj = db.get::<DBStore>(db_name)?;
-    let my_user = api::get_user(username, &obj.access_token, client_id).await?;
-    if my_user.data.is_empty() {
-        bail!("my user not found");
-    }
-    let my_user_id = &my_user.data[0].id;
-    let updated_obj = DBStore {
-        user_id: my_user_id.to_string(),
-        ..obj
-    };
-    db.save_with_id(&updated_obj, db_name)?;
+    let mut store = Store::new(db_dir, db_name)?;
+    let my_user_id = store.user_id(username, client_id).await?;
     let bot_names = get_bots_list().await?;
     for bot_name in bot_names {
-        match api::get_user(&bot_name, &updated_obj.access_token, client_id).await {
+        match api::get_user(&bot_name, store.access_token(), client_id).await {
             Ok(user) => {
                 if !user.data.is_empty() {
                     info!("ban {}: {}", bot_name, user.data[0].id);
                     match api::ban_user(
-                        my_user_id,
+                        &my_user_id,
                         &user.data[0].id,
-                        &updated_obj.access_token,
+                        store.access_token(),
                         client_id,
                     )
                     .await

@@ -1,79 +1,55 @@
-use crate::api::get_tokens_by_refresh;
-use crate::DBStore;
 use futures_util::{SinkExt, StreamExt};
-use jfs::Store;
 use lazy_static::lazy_static;
 use log::{info, warn};
 use regex::Regex;
-use std::path::Path;
 use thiserror::Error;
 use tokio_tungstenite::{
     connect_async, tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream,
 };
 use url::Url;
 
-const CONNECT_ADDR: &str = "wss://irc-ws.chat.twitch.tv:443";
-const IRC_TIMEOUT_SECS: u64 = 60 * 10;
+#[derive(Error, Debug)]
+pub enum ChatError {
+    #[error("login failed")]
+    LoginFailed,
+    #[error("connection error")]
+    MessageConnectionError,
+    #[error(transparent)]
+    ConnectionError(#[from] tokio_tungstenite::tungstenite::Error),
+}
 
-#[allow(clippy::too_many_arguments)]
-pub async fn read_chat(
-    db_dir: &Path,
-    db_name: &str,
-    username: &str,
-    channel: &str,
-    client_id: &str,
-    client_secret: &str,
-    operations: &[String],
-    address: &str,
-) -> anyhow::Result<()> {
-    let url = url::Url::parse(CONNECT_ADDR)?;
-    let db = Store::new(db_dir)?;
-    loop {
-        let obj = db.get::<DBStore>(db_name)?;
-        let mut ws_stream =
-            match connect_and_authorize(&url, &obj.access_token, username, channel).await {
-                Ok(s) => s,
-                Err(_) => continue,
-            };
-        while let Ok(Some(msg)) = tokio::time::timeout(
-            std::time::Duration::from_secs(IRC_TIMEOUT_SECS),
-            ws_stream.next(),
-        )
-        .await
-        {
-            let msg = match msg {
-                Ok(m) => m,
-                Err(e) => {
-                    warn!("{}", e);
-                    break;
+pub async fn read_chat_client_loop(
+    url: Url,
+    access_token: String,
+    username: String,
+    channel: String,
+    address: String,
+    operations: Vec<String>,
+    timeout_sec: u64,
+) -> Result<(), ChatError> {
+    let mut ws_stream = connect_and_authorize(&url, &access_token, &username, &channel).await?;
+    while let Ok(Some(msg)) = tokio::time::timeout(
+        std::time::Duration::from_secs(timeout_sec),
+        ws_stream.next(),
+    )
+    .await
+    {
+        let msg = msg?;
+        if let Err(e) = process_message(&mut ws_stream, msg, &address, &operations).await {
+            match e {
+                MessageError::LoginFailed => {
+                    return Err(ChatError::LoginFailed);
                 }
-            };
-            if let Err(e) = process_message(msg, address, operations, &mut ws_stream).await {
-                match e {
-                    ChatError::LoginFailed => {
-                        warn!("login failed: try to refresh token and reconnect.");
-                        let (access_token, refresh_token) =
-                            get_tokens_by_refresh(&obj.refresh_token, client_id, client_secret)
-                                .await?;
-                        let updated_obj = DBStore {
-                            access_token,
-                            refresh_token,
-                            ..obj
-                        };
-                        db.save_with_id(&updated_obj, db_name)?;
-                        break;
-                    }
-                    ChatError::ConnectionError(e) => {
-                        warn!("connection error {}: try to reconnect.", e);
-                        break;
-                    }
-                    ChatError::VstcError(e) => {
-                        warn!("vstc error {}: ignore it.", e);
-                    }
+                MessageError::ConnectionError(_) => {
+                    return Err(ChatError::MessageConnectionError);
+                }
+                MessageError::VstcError(e) => {
+                    warn!("vstc error {}: ignore it.", e);
                 }
             }
         }
     }
+    Ok(())
 }
 
 async fn connect_and_authorize(
@@ -100,7 +76,7 @@ async fn connect_and_authorize(
 }
 
 #[derive(Error, Debug)]
-enum ChatError {
+enum MessageError {
     #[error("login failed")]
     LoginFailed,
     #[error(transparent)]
@@ -110,11 +86,11 @@ enum ChatError {
 }
 
 async fn process_message(
+    ws_stream: &mut WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
     msg: Message,
     address: &str,
     operations: &[String],
-    ws_stream: &mut WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
-) -> Result<(), ChatError> {
+) -> Result<(), MessageError> {
     if msg.is_text() || msg.is_binary() {
         let msg_str = msg.into_text()?;
         let irc_message = parse_message(&msg_str);
@@ -127,10 +103,10 @@ async fn process_message(
                     chat_msg.as_str(),
                     irc_message.channel.unwrap_or_default().as_str(),
                 );
-                send_chat_message_to_read(chat_msg.as_str(), address, operations).await?;
+                send_chat_message_to_speak(chat_msg.as_str(), address, operations).await?;
                 Ok(())
             }
-            IrcMessageKind::LoginFailed => Err(ChatError::LoginFailed),
+            IrcMessageKind::LoginFailed => Err(MessageError::LoginFailed),
             IrcMessageKind::Ping => {
                 info!("respond to ping");
                 ws_stream
@@ -148,7 +124,7 @@ async fn process_message(
     }
 }
 
-async fn send_chat_message_to_read(
+async fn send_chat_message_to_speak(
     chat_msg: &str,
     uri: &str,
     operations: &[String],

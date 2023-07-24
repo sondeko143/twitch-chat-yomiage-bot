@@ -1,5 +1,5 @@
 use crate::api::{get_tokens_by_code, get_tokens_by_refresh, TWITCH_OAUTH2_AUTHZ_URL};
-use crate::DBStore;
+use crate::store::DBStore;
 use axum::{
     extract::{Query, State},
     http::StatusCode,
@@ -89,7 +89,7 @@ async fn auth(State(state): State<ServerState>) -> impl IntoResponse {
         ("response_type", "code"),
         (
             "scope",
-            "chat:read moderator:manage:banned_users channel:moderate moderator:read:chatters",
+            "chat:read moderator:manage:banned_users channel:moderate moderator:read:chatters moderator:read:followers",
         ),
         ("force_verify", "true"),
         ("state", state_id),

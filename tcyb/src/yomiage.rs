@@ -6,7 +6,7 @@ use log::warn;
 
 const IRC_CONNECT_ADDR: &str = "wss://irc-ws.chat.twitch.tv:443";
 const IRC_TIMEOUT_SECS: u64 = 60 * 10;
-const EVENT_CONNECT_ADDR: &str = "wss://eventsub.wss.twitch.tv/ws:443";
+const EVENT_CONNECT_ADDR: &str = "wss://eventsub.wss.twitch.tv:443/ws";
 const EVENT_TIMEOUT_SECS: u64 = 60 * 10;
 
 #[allow(clippy::too_many_arguments)]

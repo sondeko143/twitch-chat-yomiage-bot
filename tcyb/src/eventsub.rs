@@ -26,6 +26,7 @@ pub async fn sub_event_client_loop(
     greeting_template: String,
     timeout_sec: u64,
 ) -> Result<(), EventSubError> {
+    info!("connect event sub");
     let (mut ws_stream, _) = connect_async(url).await?;
     while let Ok(Some(msg)) = tokio::time::timeout(
         std::time::Duration::from_secs(timeout_sec),
@@ -119,6 +120,7 @@ async fn process_message(
     greeting_template: &str,
 ) -> Result<(), MessageError> {
     if msg.is_ping() {
+        info!("ping");
         let data = msg.into_data();
         let item = Message::Pong(data);
         ws_stream.send(item).await?;
@@ -132,6 +134,7 @@ async fn process_message(
                     Some(s) => s.id,
                     None => String::from(""),
                 };
+                info!("session welcome {}", session_id);
                 sub_event(user_id, session_id.as_str(), access_token, client_id).await?;
                 Ok(())
             }
@@ -155,10 +158,7 @@ async fn process_message(
                 },
                 None => Ok(()),
             },
-            _ => {
-                info!("{}", msg_str);
-                Ok(())
-            }
+            _ => Ok(()),
         }
     } else {
         Ok(())

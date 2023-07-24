@@ -145,6 +145,7 @@ async fn process_message(
                             Some(e) => e.user_name,
                             None => String::from("Unknown user"),
                         };
+                        info!("received follow notification {}", user_name);
                         send_greeting_message_to_speak(
                             user_name.as_str(),
                             address,
@@ -154,11 +155,17 @@ async fn process_message(
                         .await?;
                         Ok(())
                     }
-                    _ => Ok(()),
+                    _ => {
+                        info!("received {}", msg_str);
+                        Ok(())
+                    }
                 },
                 None => Ok(()),
             },
-            _ => Ok(()),
+            _ => {
+                info!("received {}", msg_str);
+                Ok(())
+            }
         }
     } else {
         Ok(())

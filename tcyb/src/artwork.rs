@@ -22,15 +22,19 @@ pub async fn get_artwork(
         };
         games.push(game_id);
     }
-    let artworks = api::get_cover(&access_token, client_id, &games).await?;
+    let covers = api::get_cover(&access_token, client_id, &games).await?;
     let image_width: u32 = 1252;
     let mut img = RgbaImage::new(image_width, 704);
-    for (idx, artwork) in artworks.iter().enumerate() {
-        info!("{}: {}", artwork.game, artwork.image_id);
+    for (idx, game) in games.iter().enumerate() {
+        let cover = covers
+            .iter()
+            .find(|x| x.game == *game)
+            .expect(format!("game id {} not found", game).as_str());
+        info!("{}: {}", cover.game, cover.image_id);
         let content = reqwest::Client::new()
             .get(format!(
                 "https://images.igdb.com/igdb/image/upload/t_cover_big_2x/{}.jpg",
-                artwork.image_id
+                cover.image_id
             ))
             .send()
             .await?
@@ -39,7 +43,7 @@ pub async fn get_artwork(
         let on_top = ImageReader::new(Cursor::new(content))
             .with_guessed_format()?
             .decode()?;
-        let len: u32 = artworks.len().try_into().unwrap();
+        let len: u32 = covers.len().try_into().unwrap();
         let index: u32 = idx.try_into().unwrap();
         let offset_x: u32 = (image_width / len) * index;
         image::imageops::overlay(&mut img, &on_top, offset_x.into(), 0);

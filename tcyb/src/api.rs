@@ -269,10 +269,17 @@ pub async fn search_game(
     name: &str,
 ) -> Result<Vec<SearchGame>, reqwest::Error> {
     let headers = auth_headers(access_token, client_id);
-    let query = format!(
-        "fields id,name,cover; search \"{}\"; where cover != null; limit 1;",
-        name
-    );
+    let query = match name.parse::<i64>() {
+        Ok(game_id) => {
+            format!("fields id,name,cover; where id = {}; limit 1;", game_id)
+        }
+        Err(_) => {
+            format!(
+                "fields id,name,cover; search \"{}\"; where cover != null; limit 1;",
+                name
+            )
+        }
+    };
     let res: Vec<SearchGame> = reqwest::Client::new()
         .post(IGDB_GAME_API_URL)
         .headers(headers)

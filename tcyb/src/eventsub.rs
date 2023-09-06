@@ -12,6 +12,8 @@ use url::Url;
 pub enum EventSubError {
     #[error("connection error")]
     MessageConnectionError,
+    #[error("session reconnect")]
+    SessionReconnect { reconnect_url: String },
     #[error(transparent)]
     ConnectionError(#[from] tokio_tungstenite::tungstenite::Error),
 }
@@ -48,6 +50,10 @@ pub async fn sub_event_client_loop(
         .await
         {
             match e {
+                MessageError::SessionReconnect { reconnect_url } => {
+                    warn!("session reconnect {}: try to reconnect.", reconnect_url);
+                    return Err(EventSubError::SessionReconnect { reconnect_url });
+                }
                 MessageError::ConnectionError(e) => {
                     warn!("connection error {}: try to reconnect.", e);
                     return Err(EventSubError::MessageConnectionError);
@@ -90,6 +96,7 @@ struct Payload {
 #[derive(Deserialize)]
 struct Session {
     id: String,
+    reconnect_url: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -99,6 +106,8 @@ struct Event {
 
 #[derive(Error, Debug)]
 enum MessageError {
+    #[error("session reconnect")]
+    SessionReconnect { reconnect_url: String },
     #[error(transparent)]
     ConnectionError(#[from] tokio_tungstenite::tungstenite::Error),
     #[error(transparent)]
@@ -137,6 +146,14 @@ async fn process_message(
                 info!("session welcome {}", session_id);
                 sub_event(user_id, session_id.as_str(), access_token, client_id).await?;
                 Ok(())
+            }
+            "session_reconnect" => {
+                let reconnect_url = match event_msg.payload.session {
+                    Some(s) => s.reconnect_url.unwrap_or(String::from("")),
+                    None => String::from(""),
+                };
+                info!("reconnect to {}", reconnect_url);
+                Err(MessageError::SessionReconnect { reconnect_url })
             }
             "notification" => match event_msg.metadata.subscription_type {
                 Some(s) => match s.as_str() {

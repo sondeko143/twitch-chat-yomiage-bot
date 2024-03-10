@@ -1,6 +1,6 @@
 use crate::api::sub_event;
 use futures_util::{SinkExt, StreamExt};
-use log::{info, warn};
+use log::{debug, info, warn};
 use serde::Deserialize;
 use thiserror::Error;
 use tokio_tungstenite::{
@@ -129,7 +129,7 @@ async fn process_message(
     greeting_template: &str,
 ) -> Result<(), MessageError> {
     if msg.is_ping() {
-        info!("ping");
+        debug!("ping");
         let data = msg.into_data();
         let item = Message::Pong(data);
         ws_stream.send(item).await?;
@@ -180,7 +180,7 @@ async fn process_message(
                 None => Ok(()),
             },
             _ => {
-                info!("received {}", msg_str);
+                debug!("received {}", msg_str);
                 Ok(())
             }
         }

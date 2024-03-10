@@ -1,8 +1,11 @@
+use std::time::Duration;
+
 use crate::settings::Settings;
 use crate::store::Store;
 use crate::{eventsub::sub_event_client_loop, irc::read_chat_client_loop};
 use anyhow::bail;
 use log::warn;
+use tokio::time::sleep;
 
 const IRC_CONNECT_ADDR: &str = "wss://irc-ws.chat.twitch.tv:443";
 const IRC_TIMEOUT_SECS: u64 = 60 * 10;
@@ -49,7 +52,17 @@ pub async fn yomiage(settings: &Settings) -> anyhow::Result<()> {
                     },
                     Ok(Err(e)) => {
                         warn!("error {}: try to reconnect.", e);
-                        store.update_tokens(&settings.client_id, &settings.client_secret).await?;
+                        loop {
+                            match store.update_tokens(&settings.client_id, &settings.client_secret).await {
+                                Ok(_) => {
+                                    break;
+                                },
+                                Err(e) => {
+                                    warn!("error {}: try to reconnect.", e);
+                                    sleep(Duration::from_secs(30)).await;
+                                }
+                            }
+                        }
                         sub_event_abort_handle.abort();
                     },
                     Err(e) => bail!(e)
@@ -63,7 +76,17 @@ pub async fn yomiage(settings: &Settings) -> anyhow::Result<()> {
                     },
                     Ok(Err(e)) => {
                         warn!("error {}: try to reconnect.", e);
-                        store.update_tokens(&settings.client_id, &settings.client_secret).await?;
+                        loop {
+                            match store.update_tokens(&settings.client_id, &settings.client_secret).await {
+                                Ok(_) => {
+                                    break;
+                                },
+                                Err(e) => {
+                                    warn!("error {}: try to reconnect.", e);
+                                    sleep(Duration::from_secs(30)).await;
+                                }
+                            }
+                        }
                         chat_abort_handle.abort();
                     },
                     Err(e) => bail!(e)

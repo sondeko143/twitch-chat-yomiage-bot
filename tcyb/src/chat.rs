@@ -15,9 +15,12 @@ pub async fn chatters(
     loop {
         match api::get_chatters(&user_id, store.access_token(), client_id).await {
             Ok(res) => {
-                res.data
-                    .iter()
-                    .for_each(|c| println!("{:?},{}", chrono::offset::Local::now(), c.user_name));
+                let t = chrono::offset::Local::now();
+                let mut users: Vec<String> =
+                    res.data.iter().map(|c| c.user_login.clone()).collect();
+                users.sort();
+                let t_formatted = format!("{}", t.format("%Y-%m-%d %H:%M:%S"));
+                println!("{},{}", t_formatted, users.join(","));
                 break;
             }
             Err(err) => {

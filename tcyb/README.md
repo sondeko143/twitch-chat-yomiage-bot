@@ -12,9 +12,11 @@ cb_client_secret = "bar" # bot の client secret
 cb_channel = "mychannel" # 読み上げるチャンネル名
 cb_username = "myusername" # bot のユーザー名
 cb_speech_port = 19829 # <https://github.com/sondeko143/vstreamer-tool> の待ち受けポート
-cb_operations = "trasnlate,tts,playback"
+cb_operations = "o:/transl?t=ja,o:/tts?i=1&spd=1.1&pit=-0.05,o:/play?v=20"
 cb_db_dir = "db"
 cb_db_name = "data.json"
+cb_greeting_template = "user_name さん。フォローありがとうございます。" # フォロー通知の読み上げメッセージ
+RUST_LOG = "INFO"
 ```
 
 ### Access Token を取る方法

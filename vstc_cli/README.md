@@ -24,5 +24,5 @@ Options:
 
 ```sh
 # 例) 翻訳して読み上げ
-./vstc_cli.exe transl tts play -p 19829 -t "hello, world"
+./vstc_cli.exe 'o:/transl?t=ja' 'o:/tts?i=1&spd=1.1&pit=-0.05' 'o:/play?v=20' -p 19829 -t "hello, world"
 ```

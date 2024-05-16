@@ -22,7 +22,7 @@ RUST_LOG = "INFO"
 ### Access Token を取る方法
 
 ```sh
-cargo run -p tcyb -- open-auth
+cargo run -p tcyb -- auth-code
 
 ## ブラウザで http://localhost:8000/auth にアクセスして後は画面の指示通り
 ```

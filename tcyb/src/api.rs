@@ -182,6 +182,7 @@ pub struct Chatter {
 }
 
 pub async fn get_chatters(
+    broadcaster_id: &str,
     operator_id: &str,
     access_token: &str,
     client_id: &str,
@@ -191,7 +192,7 @@ pub async fn get_chatters(
         .get(TWITCH_CHATTERS_API_URL)
         .headers(headers)
         .query(&[
-            ("broadcaster_id", operator_id),
+            ("broadcaster_id", broadcaster_id),
             ("moderator_id", operator_id),
         ])
         .send()

@@ -95,6 +95,7 @@ async fn main() -> Result<()> {
             chat::chatters(
                 &settings.db_dir,
                 &settings.db_name,
+                &settings.channel,
                 &settings.username,
                 &settings.client_id,
                 &settings.client_secret,

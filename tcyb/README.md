@@ -16,6 +16,7 @@ cb_operations = "o:/transl?t=ja,o:/tts?i=1&spd=1.1&pit=-0.05,o:/play?v=20"
 cb_db_dir = "db"
 cb_db_name = "data.json"
 cb_greeting_template = "user_name さん。フォローありがとうございます。" # フォロー通知の読み上げメッセージ
+cb_translate_command = "translate" # 翻訳に使用する外部コマンド (第一引数に原文を渡し、標準出力を翻訳結果とする)
 RUST_LOG = "INFO"
 ```
 

@@ -1,3 +1,5 @@
+use std::process::Command;
+
 use futures_util::{SinkExt, StreamExt};
 use lazy_static::lazy_static;
 use log::{info, warn};
@@ -26,6 +28,7 @@ pub async fn read_chat_client_loop(
     address: String,
     operations: Vec<String>,
     timeout_sec: u64,
+    translate_command: String,
 ) -> Result<(), ChatError> {
     let mut ws_stream = connect_and_authorize(&url, &access_token, &username, &channel).await?;
     while let Ok(Some(msg)) = tokio::time::timeout(
@@ -35,7 +38,17 @@ pub async fn read_chat_client_loop(
     .await
     {
         let msg = msg?;
-        if let Err(e) = process_message(&mut ws_stream, msg, &address, &operations).await {
+        if let Err(e) = process_message(
+            &mut ws_stream,
+            msg,
+            &address,
+            &operations,
+            &username,
+            &channel,
+            &translate_command,
+        )
+        .await
+        {
             match e {
                 MessageError::LoginFailed => {
                     return Err(ChatError::LoginFailed);
@@ -72,6 +85,9 @@ async fn connect_and_authorize(
     ws_stream
         .send(Message::Text(format!("JOIN #{}", channel)))
         .await?;
+    ws_stream
+        .send(Message::Text(String::from("CAP REQ :twitch.tv/tags")))
+        .await?;
     Ok(ws_stream)
 }
 
@@ -90,6 +106,9 @@ async fn process_message(
     msg: Message,
     address: &str,
     operations: &[String],
+    username: &str,
+    channel: &str,
+    translate_command: &str,
 ) -> Result<(), MessageError> {
     if msg.is_text() || msg.is_binary() {
         let msg_str = msg.into_text()?;
@@ -97,14 +116,52 @@ async fn process_message(
         match irc_message.kind {
             IrcMessageKind::Chat => {
                 let chat_msg = irc_message.chat_msg.unwrap_or_default();
-                info!(
-                    "{:?} says {:?} in #{:?}",
-                    irc_message.user.unwrap_or_default().as_str(),
-                    chat_msg.as_str(),
-                    irc_message.channel.unwrap_or_default().as_str(),
-                );
-                send_chat_message_to_speak(chat_msg.as_str(), address, operations).await?;
-                Ok(())
+                let user = irc_message.user.unwrap_or_default();
+                if user != username {
+                    info!(
+                        "{:?} says {:?} in #{:?}",
+                        user.as_str(),
+                        chat_msg.as_str(),
+                        irc_message.channel.unwrap_or_default().as_str(),
+                    );
+                    send_chat_message_to_speak(chat_msg.as_str(), address, operations).await?;
+                    let msg_id = irc_message.msg_id.unwrap_or_default();
+                    match Command::new(translate_command)
+                        .args([chat_msg.as_str()])
+                        .output()
+                    {
+                        Ok(output) => {
+                            let stdout = match std::str::from_utf8(&output.stdout) {
+                                Ok(val) => val,
+                                Err(err) => {
+                                    warn!("{err}");
+                                    ""
+                                }
+                            };
+                            info!("{stdout}");
+                            if !stdout.is_empty() {
+                                let translated_message = format!(
+                                    "@reply-parent-msg-id={msg_id} PRIVMSG #{channel} :{stdout}"
+                                );
+                                match ws_stream
+                                    .send(Message::Text(String::from(translated_message.as_str())))
+                                    .await
+                                {
+                                    Ok(_) => {
+                                        info! {"{translated_message}"}
+                                    }
+                                    Err(err) => warn!("{err}"),
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            warn!("{err}");
+                        }
+                    }
+                    Ok(())
+                } else {
+                    Ok(())
+                }
             }
             IrcMessageKind::LoginFailed => Err(MessageError::LoginFailed),
             IrcMessageKind::Ping => {
@@ -145,6 +202,7 @@ enum IrcMessageKind {
 #[derive(Default)]
 struct IrcMessage {
     kind: IrcMessageKind,
+    msg_id: Option<String>,
     chat_msg: Option<String>,
     user: Option<String>,
     channel: Option<String>,
@@ -153,7 +211,7 @@ struct IrcMessage {
 fn parse_message(msg_str: &str) -> IrcMessage {
     lazy_static! {
         static ref CHAT_MSG_PTN: Regex = Regex::new(
-            r":(?P<user>.+)!.+@.+\.tmi\.twitch\.tv PRIVMSG #(?P<channel>[^:]+) :(?P<chat_msg>.+)"
+            r"^@(?P<tags>[^ ]+) :(?P<user>.+)!.+@.+\.tmi\.twitch\.tv PRIVMSG #(?P<channel>[^:]+) :(?P<chat_msg>.+)"
         )
         .unwrap();
         static ref LOGIN_FAILED_PTN: Regex =
@@ -162,8 +220,18 @@ fn parse_message(msg_str: &str) -> IrcMessage {
     }
     if CHAT_MSG_PTN.is_match(msg_str) {
         if let Some(caps) = CHAT_MSG_PTN.captures(msg_str) {
+            let tags = &caps["tags"];
+            let id_tag = tags
+                .split(';')
+                .find(|tag| {
+                    let name_value: Vec<_> = tag.split('=').collect();
+                    name_value[0] == "id"
+                })
+                .unwrap_or_default();
+            let msg_id = id_tag.get(3..).unwrap_or_default();
             return IrcMessage {
                 kind: IrcMessageKind::Chat,
+                msg_id: Some(msg_id.into()),
                 chat_msg: Some(caps["chat_msg"].into()),
                 channel: Some(caps["channel"].into()),
                 user: Some(caps["user"].into()),
@@ -189,7 +257,7 @@ mod tests {
     #[test]
     fn parse_smile_emoji_message() {
         let message = parse_message(
-            ":testuser!somthing@something.tmi.twitch.tv PRIVMSG #somechannel :hello :)",
+            "@badge-info=;badges=broadcaster/1;client-nonce=c047bc731be346ced547db43b626c763;color=#151538;display-name=解樹形図_祈;emotes=;first-msg=0;flags=;id=370397f6-fd48-4190-bdf2-c8547a048df8;mod=0;returning-chatter=0;room-id=173660453;subscriber=0;tmi-sent-ts=1716111351803;turbo=0;user-id=173660453;user-type= :testuser!somthing@something.tmi.twitch.tv PRIVMSG #somechannel :hello :)",
         );
         assert_eq!(message.chat_msg.unwrap().as_str(), "hello :)");
     }

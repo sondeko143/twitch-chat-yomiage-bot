@@ -12,14 +12,27 @@ pub async fn chatters(
     client_secret: &str,
 ) -> anyhow::Result<()> {
     let mut store = Store::new(db_dir, db_name)?;
-    let channel_user: api::User =
-        api::get_user(channel_name, store.access_token(), client_id).await?;
-    if channel_user.data.is_empty() {
-        bail!("channel not found");
-    }
-    let channel_user_id = &channel_user.data[0].id;
-
     let user_id = store.user_id(username, client_id).await?;
+    let channel_user_id;
+    loop {
+        match api::get_user(channel_name, store.access_token(), client_id).await {
+            Ok(channel_user) => {
+                if channel_user.data.is_empty() {
+                    bail!("channel not found");
+                }
+                channel_user_id = channel_user.data[0].id.clone();
+                break;
+            }
+            Err(err) => {
+                if err.status() == Some(reqwest::StatusCode::UNAUTHORIZED) {
+                    warn!("refresh token: {}", err);
+                    store.update_tokens(client_id, client_secret).await?;
+                } else {
+                    bail!(err);
+                }
+            }
+        };
+    }
     loop {
         match api::get_chatters(&channel_user_id, &user_id, store.access_token(), client_id).await {
             Ok(res) => {

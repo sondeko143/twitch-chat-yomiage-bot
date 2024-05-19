@@ -30,6 +30,7 @@ pub async fn yomiage(settings: &Settings) -> anyhow::Result<()> {
             settings.speech_address.clone(),
             settings.operations.clone(),
             IRC_TIMEOUT_SECS,
+            settings.translate_command.clone(),
         ));
         let sub_event_t = tokio::spawn(sub_event_client_loop(
             event_url.clone(),

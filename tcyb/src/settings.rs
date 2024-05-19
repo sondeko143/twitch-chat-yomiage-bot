@@ -13,4 +13,5 @@ pub struct Settings {
     pub greeting_template: String,
     pub db_dir: PathBuf,
     pub db_name: String,
+    pub translate_command: String,
 }

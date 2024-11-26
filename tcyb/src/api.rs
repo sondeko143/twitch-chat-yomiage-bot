@@ -15,14 +15,22 @@ pub const TWITCH_OAUTH2_AUTHZ_URL: &str = formatcp!("https://{}/oauth2/authorize
 const IGDB_GAME_API_URL: &str = formatcp!("https://{}/v4/games", IGDB_API_HOST);
 const IGDB_COVER_API_URL: &str = formatcp!("https://{}/v4/covers", IGDB_API_HOST);
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct User {
     pub data: Vec<UserData>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct UserData {
     pub id: String,
+    pub login: String,
+    pub display_name: String,
+    #[serde(rename = "type")]
+    pub type_: String,
+    pub broadcaster_type: String,
+    pub description: String,
+    pub email: Option<String>,
+    pub created_at: String,
 }
 
 pub async fn get_user(

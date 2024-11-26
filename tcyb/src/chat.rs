@@ -60,3 +60,33 @@ pub async fn chatters(
     }
     Ok(())
 }
+
+pub async fn show_user_info(
+    db_dir: &Path,
+    db_name: &str,
+    username: &str,
+    client_id: &str,
+    client_secret: &str,
+) -> anyhow::Result<()> {
+    let mut store = Store::new(db_dir, db_name)?;
+    loop {
+        match api::get_user(username, store.access_token(), client_id).await {
+            Ok(channel_user) => {
+                if channel_user.data.is_empty() {
+                    bail!("channel not found");
+                }
+                println!("{:?}", channel_user);
+                break;
+            }
+            Err(err) => {
+                if err.status() == Some(reqwest::StatusCode::UNAUTHORIZED) {
+                    warn!("refresh token: {}", err);
+                    store.update_tokens(client_id, client_secret).await?;
+                } else {
+                    bail!(err);
+                }
+            }
+        };
+    }
+    Ok(())
+}

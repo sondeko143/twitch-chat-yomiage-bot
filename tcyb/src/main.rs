@@ -29,6 +29,7 @@ enum Commands {
     RefreshToken {},
     GetArtwork { names: Vec<String> },
     ShowChatters {},
+    ShowUser { username: String },
 }
 
 #[tokio::main]
@@ -97,6 +98,16 @@ async fn main() -> Result<()> {
                 &settings.db_name,
                 &settings.channel,
                 &settings.username,
+                &settings.client_id,
+                &settings.client_secret,
+            )
+            .await?;
+        }
+        Some(Commands::ShowUser { username }) => {
+            chat::show_user_info(
+                &settings.db_dir,
+                &settings.db_name,
+                username,
                 &settings.client_id,
                 &settings.client_secret,
             )

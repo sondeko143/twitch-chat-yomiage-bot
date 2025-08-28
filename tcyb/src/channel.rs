@@ -90,3 +90,56 @@ async fn get_bots_list() -> Result<Vec<String>, reqwest::Error> {
         .collect::<Vec<_>>();
     Ok(black_bot_names)
 }
+
+#[derive(Serialize, Deserialize)]
+struct FollowedCategories {
+    broadcaster_name: String,
+    category: String,
+}
+
+async fn follows(
+    user_id: &str,
+    after: &str,
+    access_token: &str,
+    client_id: &str,
+) -> Result<Vec<String>, reqwest::Error> {
+    let followed_users = api::get_followed(user_id, &100, after, access_token, client_id).await?;
+    let user_ids = match followed_users.pagination.cursor {
+        Some(after) => Box::pin(follows(user_id, &after, access_token, client_id)).await?,
+        None => vec![],
+    };
+    let new_user_ids: Vec<String> = followed_users
+        .data
+        .iter()
+        .map(|x| x.broadcaster_id.clone())
+        .collect();
+    Ok([new_user_ids, user_ids].concat())
+}
+
+pub async fn show_following_info(
+    db_dir: &Path,
+    db_name: &str,
+    username: &str,
+    client_id: &str,
+    client_secret: &str,
+) -> anyhow::Result<()> {
+    let mut store = Store::new(db_dir, db_name)?;
+    let user_id = store.user_id(username, client_id).await?;
+    loop {
+        match follows(&user_id, "", store.access_token(), client_id).await {
+            Ok(followed_users) => {
+                println!("{:?}", followed_users);
+                break;
+            }
+            Err(err) => {
+                if err.status() == Some(reqwest::StatusCode::UNAUTHORIZED) {
+                    warn!("refresh token: {}", err);
+                    store.update_tokens(client_id, client_secret).await?;
+                } else {
+                    bail!(err);
+                }
+            }
+        };
+    }
+    Ok(())
+}

@@ -7,6 +7,8 @@ const IGDB_API_HOST: &str = "api.igdb.com";
 const TWITCH_USERS_API_URL: &str = formatcp!("https://{}/helix/users", TWITCH_API_HOST);
 const TWITCH_BANS_API_URL: &str = formatcp!("https://{}/helix/moderation/bans", TWITCH_API_HOST);
 const TWITCH_CHATTERS_API_URL: &str = formatcp!("https://{}/helix/chat/chatters", TWITCH_API_HOST);
+const TWITCH_FOLLOWED_API_URL: &str =
+    formatcp!("https://{}/helix/channels/followed", TWITCH_API_HOST);
 const TWITCH_SUB_EVENT_API_URL: &str =
     formatcp!("https://{}/helix/eventsub/subscriptions", TWITCH_API_HOST);
 const TWITCH_ID_HOST: &str = "id.twitch.tv";
@@ -203,6 +205,52 @@ pub async fn get_chatters(
             ("broadcaster_id", broadcaster_id),
             ("moderator_id", operator_id),
         ])
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    Ok(res)
+}
+
+#[derive(Deserialize, Serialize)]
+pub struct Pagination {
+    pub cursor: Option<String>,
+}
+#[derive(Deserialize, Serialize)]
+pub struct Followeds {
+    pub data: Vec<Followed>,
+    pub pagination: Pagination,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Followed {
+    pub broadcaster_id: String,
+    pub broadcaster_login: String,
+    pub broadcaster_name: String,
+}
+
+pub async fn get_followed(
+    user_id: &str,
+    first: &i64,
+    after: &str,
+    access_token: &str,
+    client_id: &str,
+) -> Result<Followeds, reqwest::Error> {
+    let headers = auth_headers(access_token, client_id);
+    let first_s = first.to_string();
+    let queries = match after.is_empty() {
+        true => vec![("user_id", user_id), ("first", first_s.as_str())],
+        false => vec![
+            ("user_id", user_id),
+            ("first", first_s.as_str()),
+            ("after", after),
+        ],
+    };
+    let res: Followeds = reqwest::Client::new()
+        .get(TWITCH_FOLLOWED_API_URL)
+        .headers(headers)
+        .query(&queries)
         .send()
         .await?
         .error_for_status()?

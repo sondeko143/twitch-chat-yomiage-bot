@@ -1,7 +1,7 @@
 mod api;
 mod artwork;
 mod auth;
-mod ban;
+mod channel;
 mod chat;
 mod eventsub;
 mod irc;
@@ -30,6 +30,7 @@ enum Commands {
     GetArtwork { names: Vec<String> },
     ShowChatters {},
     ShowUser { username: String },
+    ShowFollowings { username: String },
 }
 
 #[tokio::main]
@@ -72,7 +73,7 @@ async fn main() -> Result<()> {
             .await?;
         }
         Some(Commands::BanBots {}) => {
-            ban::ban_bots(
+            channel::ban_bots(
                 &settings.db_dir,
                 &settings.db_name,
                 &settings.username,
@@ -105,6 +106,16 @@ async fn main() -> Result<()> {
         }
         Some(Commands::ShowUser { username }) => {
             chat::show_user_info(
+                &settings.db_dir,
+                &settings.db_name,
+                username,
+                &settings.client_id,
+                &settings.client_secret,
+            )
+            .await?;
+        }
+        Some(Commands::ShowFollowings { username }) => {
+            channel::show_following_info(
                 &settings.db_dir,
                 &settings.db_name,
                 username,

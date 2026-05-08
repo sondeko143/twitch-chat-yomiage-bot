@@ -5,6 +5,7 @@
 #![warn(clippy::pedantic)]
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use thiserror::Error;
 use url::Url;
@@ -12,6 +13,9 @@ use vstreamer_protos::{
     commander_client::CommanderClient, Command, Operand, Operation, OperationChain, OperationRoute,
     Response, Sound,
 };
+
+const CONNECT_TIMEOUT_SECS: u64 = 5;
+const RPC_TIMEOUT_SECS: u64 = 10;
 
 /// All possible errors returned by this library.
 #[derive(Error, Debug)]
@@ -52,8 +56,10 @@ pub async fn process_command(
     file_path: Option<String>,
     filters: Option<Vec<String>>,
 ) -> Result<Response, VstcError> {
-    let dst = uri.to_string();
-    let mut channel = CommanderClient::connect(dst).await?;
+    let endpoint = tonic::transport::Endpoint::new(uri.to_string())?
+        .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
+        .timeout(Duration::from_secs(RPC_TIMEOUT_SECS));
+    let mut channel = CommanderClient::connect(endpoint).await?;
     let op_routes: Result<Vec<_>, _> = operations
         .iter()
         .map(String::as_ref)

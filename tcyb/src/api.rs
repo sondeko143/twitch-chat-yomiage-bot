@@ -66,6 +66,7 @@ pub async fn get_tokens_by_refresh(
 ) -> Result<(String, String), reqwest::Error> {
     let res: RefreshToken = reqwest::Client::new()
         .post(TWITCH_OAUTH2_TOKEN_URL)
+        .timeout(std::time::Duration::from_secs(30))
         .form(&[
             ("refresh_token", refresh_token),
             ("client_id", client_id),

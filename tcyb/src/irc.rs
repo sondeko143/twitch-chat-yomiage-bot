@@ -1,14 +1,17 @@
-use std::process::Command;
-
 use futures_util::{SinkExt, StreamExt};
 use lazy_static::lazy_static;
 use log::{info, warn};
 use regex::Regex;
 use thiserror::Error;
+use tokio::process::Command;
 use tokio_tungstenite::{
     connect_async, tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream,
 };
 use url::Url;
+
+const TRANSLATE_TIMEOUT_SECS: u64 = 10;
+const PING_INTERVAL_SECS: u64 = 60;
+const PING_SEND_TIMEOUT_SECS: u64 = 5;
 
 #[derive(Error, Debug)]
 pub enum ChatError {
@@ -31,38 +34,77 @@ pub async fn read_chat_client_loop(
     translate_command: String,
 ) -> Result<(), ChatError> {
     let mut ws_stream = connect_and_authorize(&url, &access_token, &username, &channel).await?;
-    while let Ok(Some(msg)) = tokio::time::timeout(
-        std::time::Duration::from_secs(timeout_sec),
-        ws_stream.next(),
-    )
-    .await
-    {
-        let msg = msg?;
-        if let Err(e) = process_message(
-            &mut ws_stream,
-            msg,
-            &address,
-            &operations,
-            &username,
-            &channel,
-            &translate_command,
-        )
-        .await
-        {
-            match e {
-                MessageError::LoginFailed => {
-                    return Err(ChatError::LoginFailed);
+    let idle_timeout = std::time::Duration::from_secs(timeout_sec);
+    let mut ping_interval =
+        tokio::time::interval(std::time::Duration::from_secs(PING_INTERVAL_SECS));
+    ping_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    ping_interval.tick().await;
+    let mut last_received = tokio::time::Instant::now();
+    loop {
+        let elapsed = last_received.elapsed();
+        if elapsed >= idle_timeout {
+            warn!("irc idle timeout after {}s, reconnect", timeout_sec);
+            return Ok(());
+        }
+        let remaining = idle_timeout - elapsed;
+        tokio::select! {
+            res = tokio::time::timeout(remaining, ws_stream.next()) => {
+                match res {
+                    Ok(Some(msg_res)) => {
+                        last_received = tokio::time::Instant::now();
+                        let msg = msg_res?;
+                        if let Err(e) = process_message(
+                            &mut ws_stream,
+                            msg,
+                            &address,
+                            &operations,
+                            &username,
+                            &channel,
+                            &translate_command,
+                        )
+                        .await
+                        {
+                            match e {
+                                MessageError::LoginFailed => {
+                                    return Err(ChatError::LoginFailed);
+                                }
+                                MessageError::ConnectionError(_) => {
+                                    return Err(ChatError::MessageConnectionError);
+                                }
+                                MessageError::VstcError(e) => {
+                                    warn!("vstc error {}: ignore it.", e);
+                                }
+                            }
+                        }
+                    }
+                    Ok(None) => return Ok(()),
+                    Err(_) => {
+                        warn!("irc idle timeout after {}s, reconnect", timeout_sec);
+                        return Ok(());
+                    }
                 }
-                MessageError::ConnectionError(_) => {
-                    return Err(ChatError::MessageConnectionError);
-                }
-                MessageError::VstcError(e) => {
-                    warn!("vstc error {}: ignore it.", e);
+            }
+            _ = ping_interval.tick() => {
+                let send_fut = ws_stream.send(Message::Text(String::from("PING :tcyb")));
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(PING_SEND_TIMEOUT_SECS),
+                    send_fut,
+                )
+                .await
+                {
+                    Ok(Ok(_)) => {}
+                    Ok(Err(e)) => {
+                        warn!("irc ping send failed: {}", e);
+                        return Err(e.into());
+                    }
+                    Err(_) => {
+                        warn!("irc ping send timed out, reconnect");
+                        return Ok(());
+                    }
                 }
             }
         }
     }
-    Ok(())
 }
 
 async fn connect_and_authorize(
@@ -126,11 +168,17 @@ async fn process_message(
                     );
                     send_chat_message_to_speak(chat_msg.as_str(), address, operations).await?;
                     let msg_id = irc_message.msg_id.unwrap_or_default();
-                    match Command::new(translate_command)
+                    let translate_fut = Command::new(translate_command)
                         .args([chat_msg.as_str()])
-                        .output()
+                        .kill_on_drop(true)
+                        .output();
+                    match tokio::time::timeout(
+                        std::time::Duration::from_secs(TRANSLATE_TIMEOUT_SECS),
+                        translate_fut,
+                    )
+                    .await
                     {
-                        Ok(output) => {
+                        Ok(Ok(output)) => {
                             let stdout = match std::str::from_utf8(&output.stdout) {
                                 Ok(val) => val,
                                 Err(err) => {
@@ -154,8 +202,14 @@ async fn process_message(
                                 }
                             }
                         }
-                        Err(err) => {
+                        Ok(Err(err)) => {
                             warn!("{err}");
+                        }
+                        Err(_) => {
+                            warn!(
+                                "translate command timed out after {}s, killed child",
+                                TRANSLATE_TIMEOUT_SECS
+                            );
                         }
                     }
                     Ok(())
@@ -254,6 +308,30 @@ fn parse_message(msg_str: &str) -> IrcMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn translate_command_timeout_kills_long_running_child() {
+        use std::time::Duration;
+        let start = std::time::Instant::now();
+        let fut = Command::new("ping")
+            .args(["-n", "60", "127.0.0.1"])
+            .kill_on_drop(true)
+            .output();
+        let res = tokio::time::timeout(Duration::from_secs(2), fut).await;
+        let elapsed = start.elapsed();
+
+        assert!(
+            res.is_err(),
+            "expected outer timeout to fire, but child returned"
+        );
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "elapsed too long, kill_on_drop may not have worked: {:?}",
+            elapsed
+        );
+    }
+
     #[test]
     fn parse_smile_emoji_message() {
         let message = parse_message(

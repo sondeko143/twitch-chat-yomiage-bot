@@ -1,16 +1,62 @@
 use std::time::Duration;
 
 use crate::settings::Settings;
-use crate::store::Store;
+use crate::store::{Store, StoreError};
 use crate::{eventsub::sub_event_client_loop, irc::read_chat_client_loop};
 use anyhow::bail;
 use log::warn;
 use tokio::time::sleep;
 
 const IRC_CONNECT_ADDR: &str = "wss://irc-ws.chat.twitch.tv:443";
-const IRC_TIMEOUT_SECS: u64 = 60 * 10;
+const IRC_TIMEOUT_SECS: u64 = 180;
 const EVENT_CONNECT_ADDR: &str = "wss://eventsub.wss.twitch.tv:443/ws";
-const EVENT_TIMEOUT_SECS: u64 = 60 * 10;
+const EVENT_TIMEOUT_SECS: u64 = 30;
+const MAX_TOKEN_REFRESH_RETRIES: u32 = 5;
+const TOKEN_REFRESH_INITIAL_BACKOFF_SECS: u64 = 5;
+const TOKEN_REFRESH_MAX_BACKOFF_SECS: u64 = 300;
+
+async fn refresh_tokens_with_backoff(
+    store: &mut Store,
+    client_id: &str,
+    client_secret: &str,
+) -> anyhow::Result<()> {
+    let mut attempt = 0u32;
+    let mut backoff = TOKEN_REFRESH_INITIAL_BACKOFF_SECS;
+    loop {
+        match store.update_tokens(client_id, client_secret).await {
+            Ok(_) => return Ok(()),
+            Err(e) => {
+                let is_permanent = matches!(
+                    &e,
+                    StoreError::RequestError(err)
+                        if matches!(err.status().map(|s| s.as_u16()), Some(400) | Some(401))
+                );
+                if is_permanent {
+                    bail!(
+                        "token refresh failed permanently ({}); please re-authenticate via `tcyb auth-code`",
+                        e
+                    );
+                }
+                attempt += 1;
+                if attempt >= MAX_TOKEN_REFRESH_RETRIES {
+                    bail!(
+                        "token refresh exceeded {} retries: {}",
+                        MAX_TOKEN_REFRESH_RETRIES,
+                        e
+                    );
+                }
+                warn!(
+                    "token refresh failed (attempt {}/{}): {}; retry in {}s",
+                    attempt, MAX_TOKEN_REFRESH_RETRIES, e, backoff
+                );
+                sleep(Duration::from_secs(backoff)).await;
+                backoff = backoff
+                    .saturating_mul(2)
+                    .min(TOKEN_REFRESH_MAX_BACKOFF_SECS);
+            }
+        }
+    }
+}
 
 #[allow(clippy::too_many_arguments)]
 pub async fn yomiage(settings: &Settings) -> anyhow::Result<()> {
@@ -53,17 +99,12 @@ pub async fn yomiage(settings: &Settings) -> anyhow::Result<()> {
                     },
                     Ok(Err(e)) => {
                         warn!("error {}: try to reconnect.", e);
-                        loop {
-                            match store.update_tokens(&settings.client_id, &settings.client_secret).await {
-                                Ok(_) => {
-                                    break;
-                                },
-                                Err(e) => {
-                                    warn!("error {}: try to reconnect.", e);
-                                    sleep(Duration::from_secs(30)).await;
-                                }
-                            }
-                        }
+                        refresh_tokens_with_backoff(
+                            &mut store,
+                            &settings.client_id,
+                            &settings.client_secret,
+                        )
+                        .await?;
                         sub_event_abort_handle.abort();
                     },
                     Err(e) => bail!(e)
@@ -77,17 +118,12 @@ pub async fn yomiage(settings: &Settings) -> anyhow::Result<()> {
                     },
                     Ok(Err(e)) => {
                         warn!("error {}: try to reconnect.", e);
-                        loop {
-                            match store.update_tokens(&settings.client_id, &settings.client_secret).await {
-                                Ok(_) => {
-                                    break;
-                                },
-                                Err(e) => {
-                                    warn!("error {}: try to reconnect.", e);
-                                    sleep(Duration::from_secs(30)).await;
-                                }
-                            }
-                        }
+                        refresh_tokens_with_backoff(
+                            &mut store,
+                            &settings.client_id,
+                            &settings.client_secret,
+                        )
+                        .await?;
                         chat_abort_handle.abort();
                     },
                     Err(e) => bail!(e)

@@ -61,3 +61,47 @@ async fn send_minimal() {
     .unwrap();
     assert_eq!(result.result, true)
 }
+
+#[tokio::test]
+async fn process_command_times_out_when_server_silent() {
+    use std::time::Duration;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let _server = tokio::spawn(async move {
+        let mut conns = Vec::new();
+        loop {
+            match listener.accept().await {
+                Ok((s, _)) => conns.push(s),
+                Err(_) => return,
+            }
+        }
+    });
+
+    let start = std::time::Instant::now();
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(15),
+        process_command(
+            format!("http://{addr}").as_str(),
+            &[],
+            String::from("hang test"),
+            None,
+            None,
+            None,
+        ),
+    )
+    .await;
+    let elapsed = start.elapsed();
+
+    let inner = outcome.expect(
+        "process_command did not return within 15s — internal timeout not enforced",
+    );
+    assert!(
+        inner.is_err(),
+        "expected connect/RPC error against silent server, got Ok"
+    );
+    assert!(
+        elapsed < Duration::from_secs(15),
+        "took too long, internal timeout likely not active: {:?}",
+        elapsed
+    );
+}

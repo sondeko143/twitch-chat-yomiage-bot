@@ -60,7 +60,13 @@ async fn main() -> Result<()> {
 
     match &args.command {
         Some(Commands::ReadChat {}) => {
-            yomiage::yomiage(&settings).await?;
+            tokio::select! {
+                res = yomiage::yomiage(&settings) => res?,
+                sig = tokio::signal::ctrl_c() => {
+                    sig?;
+                    log::warn!("Ctrl+C received, shutting down");
+                }
+            }
         }
         Some(Commands::AuthCode {}) => {
             auth::auth_code_grant(

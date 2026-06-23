@@ -169,8 +169,20 @@ async fn process_message(
                     );
                     send_chat_message_to_speak(chat_msg.as_str(), address, operations).await?;
                     let msg_id = irc_message.msg_id.unwrap_or_default();
+                    let (cleaned, emotes) =
+                        split_message_emotes(&chat_msg, &irc_message.emote_ranges);
+                    let emote_suffix = emotes.join(" ");
+
+                    if cleaned.is_empty() {
+                        // emote のみのメッセージ: 翻訳をスキップし emote だけ返信する。
+                        if !emote_suffix.is_empty() {
+                            send_reply(ws_stream, &msg_id, channel, &emote_suffix).await;
+                        }
+                        return Ok(());
+                    }
+
                     let translate_fut = Command::new(translate_command)
-                        .args([chat_msg.as_str()])
+                        .args([cleaned.as_str()])
                         .kill_on_drop(true)
                         .output();
                     match tokio::time::timeout(
@@ -188,19 +200,8 @@ async fn process_message(
                                 }
                             };
                             info!("{stdout}");
-                            if !stdout.is_empty() {
-                                let translated_message = format!(
-                                    "@reply-parent-msg-id={msg_id} PRIVMSG #{channel} :{stdout}"
-                                );
-                                match ws_stream
-                                    .send(Message::Text(String::from(translated_message.as_str())))
-                                    .await
-                                {
-                                    Ok(_) => {
-                                        info! {"{translated_message}"}
-                                    }
-                                    Err(err) => warn!("{err}"),
-                                }
+                            if let Some(body) = translated_reply_body(stdout, &emote_suffix) {
+                                send_reply(ws_stream, &msg_id, channel, &body).await;
                             }
                         }
                         Ok(Err(err)) => {
@@ -243,6 +244,22 @@ async fn send_chat_message_to_speak(
 ) -> Result<(), vstc::VstcError> {
     vstc::process_command(uri, operations, chat_msg.to_string(), None, None, None).await?;
     Ok(())
+}
+
+async fn send_reply(
+    ws_stream: &mut WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
+    msg_id: &str,
+    channel: &str,
+    body: &str,
+) {
+    let reply = format!("@reply-parent-msg-id={msg_id} PRIVMSG #{channel} :{body}");
+    match ws_stream
+        .send(Message::Text(String::from(reply.as_str())))
+        .await
+    {
+        Ok(_) => info!("{reply}"),
+        Err(err) => warn!("{err}"),
+    }
 }
 
 fn parse_emote_ranges(tag_value: &str) -> Vec<(usize, usize)> {

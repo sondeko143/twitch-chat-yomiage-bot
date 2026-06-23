@@ -5,10 +5,11 @@
 #![warn(clippy::pedantic)]
 
 use std::collections::HashMap;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use thiserror::Error;
 use url::Url;
+use uuid::Uuid;
 use vstreamer_protos::{
     commander_client::CommanderClient, Command, Operand, Operation, OperationChain, OperationRoute,
     Response, Sound,
@@ -70,6 +71,8 @@ pub async fn process_command(
         sound,
         file_path: file_path.unwrap_or_default(),
         filters: filters.unwrap_or_default(),
+        trace_id: Uuid::new_v4().to_string(),
+        origin_ts: unix_timestamp_secs(),
     };
     let c = tonic::Request::new(Command {
         chains: vec![OperationChain {
@@ -79,6 +82,16 @@ pub async fn process_command(
     });
     let result = channel.process_command(c).await?;
     Ok(result.into_inner())
+}
+
+/// Current wall-clock time as fractional seconds since the Unix epoch.
+///
+/// Used as the telemetry origin timestamp. Returns `0.0` if the system clock is
+/// set before the Unix epoch, so command sending never fails on a clock error.
+fn unix_timestamp_secs() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0.0, |d| d.as_secs_f64())
 }
 
 fn convert_to_operation(op_str: &str) -> Result<OperationRoute, VstcError> {

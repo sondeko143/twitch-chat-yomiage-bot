@@ -63,6 +63,46 @@ async fn send_minimal() {
 }
 
 #[tokio::test]
+async fn populates_trace_id_and_origin_ts() {
+    use std::sync::mpsc::channel;
+    use std::time::Duration;
+
+    const ADDR_STR: &'static str = "127.0.0.1:9002";
+    let (tx, rx) = channel();
+    tokio::spawn(async move {
+        let mut mock = MockCommanderService::new();
+        mock.expect_process_command().returning(move |req| {
+            let operand = req.into_inner().operand.expect("operand should be present");
+            tx.send((operand.trace_id, operand.origin_ts))
+                .expect("test channel should accept the operand");
+            Ok(tonic::Response::new(Response { result: true }))
+        });
+        let addr = ADDR_STR.parse().unwrap();
+        build(mock).serve(addr).await.unwrap();
+    });
+
+    process_command(
+        format!("http://{ADDR_STR}").as_str(),
+        &[String::from("o:/tts")],
+        String::from("trace test"),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let (trace_id, origin_ts) = rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("server should have received the operand");
+    assert!(!trace_id.is_empty(), "trace_id should be populated");
+    assert!(
+        origin_ts > 0.0,
+        "origin_ts should be a positive unix timestamp, got {origin_ts}"
+    );
+}
+
+#[tokio::test]
 async fn process_command_times_out_when_server_silent() {
     use std::time::Duration;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

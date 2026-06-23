@@ -300,6 +300,18 @@ fn split_message_emotes(chat_msg: &str, ranges: &[(usize, usize)]) -> (String, V
     (cleaned, emotes)
 }
 
+fn translated_reply_body(translated_stdout: &str, emote_suffix: &str) -> Option<String> {
+    let translated = translated_stdout.trim();
+    if translated.is_empty() {
+        return None;
+    }
+    if emote_suffix.is_empty() {
+        Some(translated.to_string())
+    } else {
+        Some(format!("{translated} {emote_suffix}"))
+    }
+}
+
 #[derive(Default)]
 enum IrcMessageKind {
     Chat,
@@ -473,5 +485,26 @@ mod tests {
             split_message_emotes("PogChamp hi Kappa", &[(12, 16), (0, 7)]);
         assert_eq!(cleaned, "hi");
         assert_eq!(emotes, vec!["PogChamp".to_string(), "Kappa".to_string()]);
+    }
+
+    #[test]
+    fn translated_reply_body_empty_stdout_is_none() {
+        assert_eq!(translated_reply_body("   \n", "DinoDance"), None);
+    }
+
+    #[test]
+    fn translated_reply_body_no_emotes() {
+        assert_eq!(
+            translated_reply_body("hello\n", ""),
+            Some("hello".to_string())
+        );
+    }
+
+    #[test]
+    fn translated_reply_body_appends_emotes() {
+        assert_eq!(
+            translated_reply_body("hello\n", "DinoDance"),
+            Some("hello DinoDance".to_string())
+        );
     }
 }

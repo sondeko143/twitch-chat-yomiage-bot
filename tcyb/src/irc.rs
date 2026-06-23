@@ -269,6 +269,9 @@ fn split_message_emotes(chat_msg: &str, ranges: &[(usize, usize)]) -> (String, V
         return (chat_msg.to_string(), Vec::new());
     }
     let chars: Vec<char> = chat_msg.chars().collect();
+    // Sort by start position so emotes are collected in text-appearance order
+    // ("出現順"), independent of how ranges are grouped in the emotes tag
+    // (Twitch groups ranges by emote id, not by text position).
     let mut sorted: Vec<(usize, usize)> = ranges.to_vec();
     sorted.sort_by_key(|&(start, _)| start);
 
@@ -460,5 +463,15 @@ mod tests {
         let (cleaned, emotes) = split_message_emotes("hi Kappa PogChamp", &[(3, 7), (9, 16)]);
         assert_eq!(cleaned, "hi");
         assert_eq!(emotes, vec!["Kappa".to_string(), "PogChamp".to_string()]);
+    }
+
+    #[test]
+    fn split_message_emotes_orders_by_text_position() {
+        // Ranges passed unsorted (Kappa range first), but Kappa appears later in
+        // the text than PogChamp. Output must follow text position, not input order.
+        let (cleaned, emotes) =
+            split_message_emotes("PogChamp hi Kappa", &[(12, 16), (0, 7)]);
+        assert_eq!(cleaned, "hi");
+        assert_eq!(emotes, vec!["PogChamp".to_string(), "Kappa".to_string()]);
     }
 }

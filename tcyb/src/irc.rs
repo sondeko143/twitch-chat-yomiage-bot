@@ -264,6 +264,39 @@ fn parse_emote_ranges(tag_value: &str) -> Vec<(usize, usize)> {
     ranges
 }
 
+fn split_message_emotes(chat_msg: &str, ranges: &[(usize, usize)]) -> (String, Vec<String>) {
+    if ranges.is_empty() {
+        return (chat_msg.to_string(), Vec::new());
+    }
+    let chars: Vec<char> = chat_msg.chars().collect();
+    let mut sorted: Vec<(usize, usize)> = ranges.to_vec();
+    sorted.sort_by_key(|&(start, _)| start);
+
+    let mut emotes: Vec<String> = Vec::new();
+    let mut covered = vec![false; chars.len()];
+    for &(start, end) in &sorted {
+        if start > end || end >= chars.len() {
+            continue;
+        }
+        let emote: String = chars[start..=end].iter().collect();
+        if !emotes.contains(&emote) {
+            emotes.push(emote);
+        }
+        for slot in &mut covered[start..=end] {
+            *slot = true;
+        }
+    }
+
+    let cleaned_raw: String = chars
+        .iter()
+        .enumerate()
+        .filter_map(|(i, c)| if covered[i] { None } else { Some(*c) })
+        .collect();
+    let cleaned = cleaned_raw.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    (cleaned, emotes)
+}
+
 #[derive(Default)]
 enum IrcMessageKind {
     Chat,
@@ -378,5 +411,54 @@ mod tests {
     #[test]
     fn parse_emote_ranges_multiple_emotes() {
         assert_eq!(parse_emote_ranges("25:0-4/1902:6-10"), vec![(0, 4), (6, 10)]);
+    }
+
+    #[test]
+    fn split_message_emotes_no_ranges() {
+        let (cleaned, emotes) = split_message_emotes("hello world", &[]);
+        assert_eq!(cleaned, "hello world");
+        assert!(emotes.is_empty());
+    }
+
+    #[test]
+    fn split_message_emotes_trailing_emote() {
+        let (cleaned, emotes) = split_message_emotes("Hello DinoDance", &[(6, 14)]);
+        assert_eq!(cleaned, "Hello");
+        assert_eq!(emotes, vec!["DinoDance".to_string()]);
+    }
+
+    #[test]
+    fn split_message_emotes_middle_emote_collapses_space() {
+        let (cleaned, emotes) = split_message_emotes("a Kappa b", &[(2, 6)]);
+        assert_eq!(cleaned, "a b");
+        assert_eq!(emotes, vec!["Kappa".to_string()]);
+    }
+
+    #[test]
+    fn split_message_emotes_japanese_codepoint() {
+        let (cleaned, emotes) = split_message_emotes("こんにちは DinoDance", &[(6, 14)]);
+        assert_eq!(cleaned, "こんにちは");
+        assert_eq!(emotes, vec!["DinoDance".to_string()]);
+    }
+
+    #[test]
+    fn split_message_emotes_emote_only() {
+        let (cleaned, emotes) = split_message_emotes("DinoDance", &[(0, 8)]);
+        assert_eq!(cleaned, "");
+        assert_eq!(emotes, vec!["DinoDance".to_string()]);
+    }
+
+    #[test]
+    fn split_message_emotes_dedup_same_emote() {
+        let (cleaned, emotes) = split_message_emotes("Kappa hi Kappa", &[(0, 4), (9, 13)]);
+        assert_eq!(cleaned, "hi");
+        assert_eq!(emotes, vec!["Kappa".to_string()]);
+    }
+
+    #[test]
+    fn split_message_emotes_keeps_distinct_emotes() {
+        let (cleaned, emotes) = split_message_emotes("hi Kappa PogChamp", &[(3, 7), (9, 16)]);
+        assert_eq!(cleaned, "hi");
+        assert_eq!(emotes, vec!["Kappa".to_string(), "PogChamp".to_string()]);
     }
 }

@@ -245,6 +245,25 @@ async fn send_chat_message_to_speak(
     Ok(())
 }
 
+fn parse_emote_ranges(tag_value: &str) -> Vec<(usize, usize)> {
+    let mut ranges = Vec::new();
+    if tag_value.is_empty() {
+        return ranges;
+    }
+    for emote in tag_value.split('/') {
+        if let Some((_id, positions)) = emote.split_once(':') {
+            for pos in positions.split(',') {
+                if let Some((start, end)) = pos.split_once('-') {
+                    if let (Ok(s), Ok(e)) = (start.parse::<usize>(), end.parse::<usize>()) {
+                        ranges.push((s, e));
+                    }
+                }
+            }
+        }
+    }
+    ranges
+}
+
 #[derive(Default)]
 enum IrcMessageKind {
     Chat,
@@ -339,5 +358,25 @@ mod tests {
             "@badge-info=;badges=broadcaster/1;client-nonce=c047bc731be346ced547db43b626c763;color=#151538;display-name=解樹形図_祈;emotes=;first-msg=0;flags=;id=370397f6-fd48-4190-bdf2-c8547a048df8;mod=0;returning-chatter=0;room-id=173660453;subscriber=0;tmi-sent-ts=1716111351803;turbo=0;user-id=173660453;user-type= :testuser!somthing@something.tmi.twitch.tv PRIVMSG #somechannel :hello :)",
         );
         assert_eq!(message.chat_msg.unwrap().as_str(), "hello :)");
+    }
+
+    #[test]
+    fn parse_emote_ranges_empty() {
+        assert_eq!(parse_emote_ranges(""), Vec::<(usize, usize)>::new());
+    }
+
+    #[test]
+    fn parse_emote_ranges_single() {
+        assert_eq!(parse_emote_ranges("25:0-4"), vec![(0, 4)]);
+    }
+
+    #[test]
+    fn parse_emote_ranges_same_emote_multiple() {
+        assert_eq!(parse_emote_ranges("25:0-4,12-16"), vec![(0, 4), (12, 16)]);
+    }
+
+    #[test]
+    fn parse_emote_ranges_multiple_emotes() {
+        assert_eq!(parse_emote_ranges("25:0-4/1902:6-10"), vec![(0, 4), (6, 10)]);
     }
 }

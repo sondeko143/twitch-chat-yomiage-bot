@@ -40,12 +40,12 @@ async fn main() -> Result<()> {
             let filename = wav_path.as_path();
             let mut wav_file =
                 File::open(filename).context(format!("unable to open '{:?}'", filename))?;
-            let (header, data) = sound::read(&mut wav_file)?;
+            let (spec, data) = sound::read(&mut wav_file)?;
             Some(Sound {
                 data,
-                rate: header.sampling_rate,
-                format: sound::convert_format(&header),
-                channels: header.channel_count.into(),
+                rate: spec.sample_rate,
+                format: sound::convert_format(&spec),
+                channels: spec.channels.into(),
             })
         }
         None => Some(Sound::default()),

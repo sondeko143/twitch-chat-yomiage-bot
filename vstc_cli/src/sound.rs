@@ -1,88 +1,58 @@
-use std::io::{self, Read};
-use wav::Header;
+use std::io::Read;
 
-pub fn read<R>(reader: &mut R) -> io::Result<(Header, Vec<u8>)>
+use hound::{SampleFormat, WavReader, WavSpec};
+
+/// Read a WAV stream and return its format spec together with the raw,
+/// little-endian PCM bytes of the `data` chunk.
+///
+/// The returned bytes are reconstructed sample-by-sample so that they are
+/// byte-for-byte identical to the original `data` chunk: signed little-endian
+/// for 16/24-bit integer samples, unsigned for 8-bit (per the WAV convention),
+/// and IEEE little-endian for 32-bit float samples.
+pub fn read<R>(reader: R) -> hound::Result<(WavSpec, Vec<u8>)>
 where
-    R: Read + io::Seek,
+    R: Read,
 {
-    let header = read_header(reader)?;
-    Ok((header, read_data(reader)?))
-}
+    let mut wav = WavReader::new(reader)?;
+    let spec = wav.spec();
+    let bytes_per_sample = (spec.bits_per_sample as usize).div_ceil(8);
+    let mut data = Vec::with_capacity(wav.len() as usize * bytes_per_sample);
 
-fn read_header<R>(reader: &mut R) -> io::Result<Header>
-where
-    R: Read + io::Seek,
-{
-    let wav = verify_wav_file(reader)?;
-
-    let c = wav.iter(reader).find(|c| c.id().as_str() == "fmt ");
-    match c {
-        Some(c) => {
-            let header_bytes = c.read_contents(reader)?;
-            let header = Header::try_from(header_bytes.as_slice())
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-
-            // Return error if not using PCM
-            match header.audio_format {
-                wav::WAV_FORMAT_PCM | wav::WAV_FORMAT_IEEE_FLOAT => Ok(header),
-                _ => Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    "Unsupported data format, data is not in uncompressed PCM format, aborting",
-                )),
+    match spec.sample_format {
+        SampleFormat::Int => {
+            for sample in wav.samples::<i32>() {
+                let sample = sample?;
+                if spec.bits_per_sample == 8 {
+                    // WAV stores 8-bit PCM as unsigned; hound returns it
+                    // centered around zero, so shift it back to [0, 255].
+                    data.push((sample + 128) as u8);
+                } else {
+                    data.extend_from_slice(&sample.to_le_bytes()[..bytes_per_sample]);
+                }
             }
         }
-        None => Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "RIFF data is missing the \"fmt \" chunk, aborting",
-        )),
+        SampleFormat::Float => {
+            for sample in wav.samples::<f32>() {
+                data.extend_from_slice(&sample?.to_le_bytes());
+            }
+        }
     }
+
+    Ok((spec, data))
 }
 
-pub fn convert_format(header: &Header) -> i32 {
-    match header.audio_format {
-        wav::WAV_FORMAT_PCM => match header.bits_per_sample {
+/// Map a WAV spec to the integer format code expected by the server.
+pub fn convert_format(spec: &WavSpec) -> i32 {
+    match spec.sample_format {
+        SampleFormat::Int => match spec.bits_per_sample {
             8 => 2,
             16 => 4,
             24 => 8,
             _ => 0,
         },
-        wav::WAV_FORMAT_IEEE_FLOAT => match header.bits_per_sample {
+        SampleFormat::Float => match spec.bits_per_sample {
             32 => 16,
             _ => 0,
         },
-        _ => 0,
-    }
-}
-
-fn read_data<R>(reader: &mut R) -> io::Result<Vec<u8>>
-where
-    R: Read + io::Seek,
-{
-    let wav = verify_wav_file(reader)?;
-    let c = wav.iter(reader).find(|c| c.id().as_str() == "data");
-    match c {
-        Some(c) => c.read_contents(reader),
-        None => Err(io::Error::new(
-            io::ErrorKind::Other,
-            "Could not parse audio data",
-        )),
-    }
-}
-
-fn verify_wav_file<R>(reader: &mut R) -> io::Result<riff::Chunk>
-where
-    R: Read + io::Seek,
-{
-    let wav = riff::Chunk::read(reader, 0)?;
-
-    let form_type = wav.read_type(reader)?;
-
-    if form_type.as_str() == "WAVE" {
-        Ok(wav)
-    } else {
-        Err(io::Error::new(
-            io::ErrorKind::Other,
-            "RIFF file type not \"WAVE\"",
-        ))
     }
 }

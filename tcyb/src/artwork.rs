@@ -29,7 +29,7 @@ pub async fn get_artwork(
         let cover = covers
             .iter()
             .find(|x| x.game == *game)
-            .expect(format!("game id {} not found", game).as_str());
+            .unwrap_or_else(|| panic!("game id {} not found", game));
         info!("{}: {}", cover.game, cover.image_id);
         let content = reqwest::Client::new()
             .get(format!(

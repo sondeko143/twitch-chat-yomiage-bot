@@ -23,6 +23,7 @@ pub enum ChatError {
     ConnectionError(#[from] tokio_tungstenite::tungstenite::Error),
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn read_chat_client_loop(
     url: Url,
     access_token: String,

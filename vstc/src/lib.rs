@@ -30,15 +30,27 @@ pub enum VstcError {
 
     /// Connection error
     #[error(transparent)]
-    TransportError(#[from] tonic::transport::Error),
+    TransportError(Box<tonic::transport::Error>),
 
     /// Send error
     #[error(transparent)]
-    StatusError(#[from] tonic::Status),
+    StatusError(Box<tonic::Status>),
 
     /// Operation parse error
     #[error(transparent)]
     UrlError(#[from] url::ParseError),
+}
+
+impl From<tonic::transport::Error> for VstcError {
+    fn from(value: tonic::transport::Error) -> Self {
+        Self::TransportError(Box::new(value))
+    }
+}
+
+impl From<tonic::Status> for VstcError {
+    fn from(value: tonic::Status) -> Self {
+        Self::StatusError(Box::new(value))
+    }
 }
 
 /// Send the command to the channel.

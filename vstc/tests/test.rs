@@ -40,7 +40,7 @@ pub fn build(cmd: impl Commander) -> Router {
 
 #[tokio::test]
 async fn send_minimal() {
-    const ADDR_STR: &'static str = "127.0.0.1:9001";
+    const ADDR_STR: &str = "127.0.0.1:9001";
     tokio::spawn(async move {
         let mut mock = MockCommanderService::new();
         mock.expect_process_command()
@@ -51,7 +51,7 @@ async fn send_minimal() {
 
     let result = process_command(
         format!("http://{ADDR_STR}").as_str(),
-        &vec![String::from("o:/tts")],
+        &[String::from("o:/tts")],
         String::from(""),
         None,
         None,
@@ -59,7 +59,7 @@ async fn send_minimal() {
     )
     .await
     .unwrap();
-    assert_eq!(result.result, true)
+    assert!(result.result)
 }
 
 #[tokio::test]
@@ -67,7 +67,7 @@ async fn populates_trace_id_and_origin_ts() {
     use std::sync::mpsc::channel;
     use std::time::Duration;
 
-    const ADDR_STR: &'static str = "127.0.0.1:9002";
+    const ADDR_STR: &str = "127.0.0.1:9002";
     let (tx, rx) = channel();
     tokio::spawn(async move {
         let mut mock = MockCommanderService::new();

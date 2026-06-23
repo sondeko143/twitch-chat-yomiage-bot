@@ -100,8 +100,7 @@ async fn auth(State(state): State<ServerState>) -> impl IntoResponse {
         .collect::<Vec<_>>()
         .join("&");
 
-    return Redirect::to(format!("{}?{}", TWITCH_OAUTH2_AUTHZ_URL, queries).as_str())
-        .into_response();
+    Redirect::to(format!("{}?{}", TWITCH_OAUTH2_AUTHZ_URL, queries).as_str()).into_response()
 }
 
 #[derive(Debug, Deserialize, Default)]

@@ -18,6 +18,7 @@ pub enum EventSubError {
     ConnectionError(#[from] tokio_tungstenite::tungstenite::Error),
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn sub_event_client_loop(
     url: Url,
     access_token: String,
@@ -118,6 +119,7 @@ enum MessageError {
     VstcError(#[from] vstc::VstcError),
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn process_message(
     ws_stream: &mut WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
     msg: Message,

@@ -348,6 +348,13 @@ struct IrcMessage {
     emote_ranges: Vec<(usize, usize)>,
 }
 
+fn find_tag<'a>(tags: &'a str, name: &str) -> Option<&'a str> {
+    tags.split(';').find_map(|tag| {
+        let (key, value) = tag.split_once('=')?;
+        (key == name).then_some(value)
+    })
+}
+
 fn parse_message(msg_str: &str) -> IrcMessage {
     lazy_static! {
         static ref CHAT_MSG_PTN: Regex = Regex::new(
@@ -361,22 +368,8 @@ fn parse_message(msg_str: &str) -> IrcMessage {
     if CHAT_MSG_PTN.is_match(msg_str) {
         if let Some(caps) = CHAT_MSG_PTN.captures(msg_str) {
             let tags = &caps["tags"];
-            let id_tag = tags
-                .split(';')
-                .find(|tag| {
-                    let name_value: Vec<_> = tag.split('=').collect();
-                    name_value[0] == "id"
-                })
-                .unwrap_or_default();
-            let msg_id = id_tag.get(3..).unwrap_or_default();
-            let emotes_tag = tags
-                .split(';')
-                .find(|tag| {
-                    let name_value: Vec<_> = tag.split('=').collect();
-                    name_value[0] == "emotes"
-                })
-                .unwrap_or_default();
-            let emote_ranges = parse_emote_ranges(emotes_tag.get(7..).unwrap_or_default());
+            let msg_id = find_tag(tags, "id").unwrap_or_default();
+            let emote_ranges = parse_emote_ranges(find_tag(tags, "emotes").unwrap_or_default());
             return IrcMessage {
                 kind: IrcMessageKind::Chat,
                 msg_id: Some(msg_id.into()),
@@ -425,6 +418,22 @@ mod tests {
             "elapsed too long, kill_on_drop may not have worked: {:?}",
             elapsed
         );
+    }
+
+    #[test]
+    fn find_tag_returns_value() {
+        assert_eq!(find_tag("id=abc;mod=0", "id"), Some("abc"));
+        assert_eq!(find_tag("id=abc;mod=0", "mod"), Some("0"));
+    }
+
+    #[test]
+    fn find_tag_missing_returns_none() {
+        assert_eq!(find_tag("id=abc;mod=0", "emotes"), None);
+    }
+
+    #[test]
+    fn find_tag_empty_value() {
+        assert_eq!(find_tag("emotes=;id=abc", "emotes"), Some(""));
     }
 
     #[test]

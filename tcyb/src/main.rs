@@ -1,5 +1,4 @@
 mod api;
-mod artwork;
 mod auth;
 mod channel;
 mod chat;
@@ -27,7 +26,6 @@ enum Commands {
     AuthCode {},
     BanBots {},
     RefreshToken {},
-    GetArtwork { names: Vec<String> },
     ShowChatters {},
     ShowUser { username: String },
     ShowFollowings { username: String },
@@ -95,9 +93,6 @@ async fn main() -> Result<()> {
                 &settings.client_secret,
             )
             .await?;
-        }
-        Some(Commands::GetArtwork { names }) => {
-            artwork::get_artwork(&settings.client_id, &settings.client_secret, names).await?;
         }
         Some(Commands::ShowChatters {}) => {
             chat::chatters(

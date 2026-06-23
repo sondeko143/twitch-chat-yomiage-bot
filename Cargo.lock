@@ -2241,7 +2241,6 @@ dependencies = [
  "dotenv",
  "futures-util",
  "hyper",
- "image",
  "jfs",
  "lazy_static",
  "log",

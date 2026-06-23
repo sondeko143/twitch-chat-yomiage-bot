@@ -1044,6 +1044,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "igdb"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "config",
+ "const_format",
+ "dotenv",
+ "image",
+ "log",
+ "reqwest",
+ "serde",
+ "simple_logger",
+ "tokio",
+]
+
+[[package]]
 name = "image"
 version = "0.24.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2224,7 +2241,6 @@ dependencies = [
  "dotenv",
  "futures-util",
  "hyper",
- "image",
  "jfs",
  "lazy_static",
  "log",

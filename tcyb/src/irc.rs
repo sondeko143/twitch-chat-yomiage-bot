@@ -169,8 +169,20 @@ async fn process_message(
                     );
                     send_chat_message_to_speak(chat_msg.as_str(), address, operations).await?;
                     let msg_id = irc_message.msg_id.unwrap_or_default();
+                    let (cleaned, emotes) =
+                        split_message_emotes(&chat_msg, &irc_message.emote_ranges);
+                    let emote_suffix = emotes.join(" ");
+
+                    if cleaned.is_empty() {
+                        // emote のみのメッセージ: 翻訳をスキップし emote だけ返信する。
+                        if !emote_suffix.is_empty() {
+                            send_reply(ws_stream, &msg_id, channel, &emote_suffix).await;
+                        }
+                        return Ok(());
+                    }
+
                     let translate_fut = Command::new(translate_command)
-                        .args([chat_msg.as_str()])
+                        .args([cleaned.as_str()])
                         .kill_on_drop(true)
                         .output();
                     match tokio::time::timeout(
@@ -188,19 +200,8 @@ async fn process_message(
                                 }
                             };
                             info!("{stdout}");
-                            if !stdout.is_empty() {
-                                let translated_message = format!(
-                                    "@reply-parent-msg-id={msg_id} PRIVMSG #{channel} :{stdout}"
-                                );
-                                match ws_stream
-                                    .send(Message::Text(String::from(translated_message.as_str())))
-                                    .await
-                                {
-                                    Ok(_) => {
-                                        info! {"{translated_message}"}
-                                    }
-                                    Err(err) => warn!("{err}"),
-                                }
+                            if let Some(body) = translated_reply_body(stdout, &emote_suffix) {
+                                send_reply(ws_stream, &msg_id, channel, &body).await;
                             }
                         }
                         Ok(Err(err)) => {
@@ -245,6 +246,89 @@ async fn send_chat_message_to_speak(
     Ok(())
 }
 
+async fn send_reply(
+    ws_stream: &mut WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
+    msg_id: &str,
+    channel: &str,
+    body: &str,
+) {
+    let reply = format!("@reply-parent-msg-id={msg_id} PRIVMSG #{channel} :{body}");
+    match ws_stream
+        .send(Message::Text(String::from(reply.as_str())))
+        .await
+    {
+        Ok(_) => info!("{reply}"),
+        Err(err) => warn!("{err}"),
+    }
+}
+
+fn parse_emote_ranges(tag_value: &str) -> Vec<(usize, usize)> {
+    let mut ranges = Vec::new();
+    if tag_value.is_empty() {
+        return ranges;
+    }
+    for emote in tag_value.split('/') {
+        if let Some((_id, positions)) = emote.split_once(':') {
+            for pos in positions.split(',') {
+                if let Some((start, end)) = pos.split_once('-') {
+                    if let (Ok(s), Ok(e)) = (start.parse::<usize>(), end.parse::<usize>()) {
+                        ranges.push((s, e));
+                    }
+                }
+            }
+        }
+    }
+    ranges
+}
+
+fn split_message_emotes(chat_msg: &str, ranges: &[(usize, usize)]) -> (String, Vec<String>) {
+    if ranges.is_empty() {
+        return (chat_msg.to_string(), Vec::new());
+    }
+    let chars: Vec<char> = chat_msg.chars().collect();
+    // Sort by start position so emotes are collected in text-appearance order
+    // ("出現順"), independent of how ranges are grouped in the emotes tag
+    // (Twitch groups ranges by emote id, not by text position).
+    let mut sorted: Vec<(usize, usize)> = ranges.to_vec();
+    sorted.sort_by_key(|&(start, _)| start);
+
+    let mut emotes: Vec<String> = Vec::new();
+    let mut covered = vec![false; chars.len()];
+    for &(start, end) in &sorted {
+        if start > end || end >= chars.len() {
+            continue;
+        }
+        let emote: String = chars[start..=end].iter().collect();
+        if !emotes.contains(&emote) {
+            emotes.push(emote);
+        }
+        for slot in &mut covered[start..=end] {
+            *slot = true;
+        }
+    }
+
+    let cleaned_raw: String = chars
+        .iter()
+        .enumerate()
+        .filter_map(|(i, c)| if covered[i] { None } else { Some(*c) })
+        .collect();
+    let cleaned = cleaned_raw.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    (cleaned, emotes)
+}
+
+fn translated_reply_body(translated_stdout: &str, emote_suffix: &str) -> Option<String> {
+    let translated = translated_stdout.trim();
+    if translated.is_empty() {
+        return None;
+    }
+    if emote_suffix.is_empty() {
+        Some(translated.to_string())
+    } else {
+        Some(format!("{translated} {emote_suffix}"))
+    }
+}
+
 #[derive(Default)]
 enum IrcMessageKind {
     Chat,
@@ -261,6 +345,7 @@ struct IrcMessage {
     chat_msg: Option<String>,
     user: Option<String>,
     channel: Option<String>,
+    emote_ranges: Vec<(usize, usize)>,
 }
 
 fn parse_message(msg_str: &str) -> IrcMessage {
@@ -284,12 +369,21 @@ fn parse_message(msg_str: &str) -> IrcMessage {
                 })
                 .unwrap_or_default();
             let msg_id = id_tag.get(3..).unwrap_or_default();
+            let emotes_tag = tags
+                .split(';')
+                .find(|tag| {
+                    let name_value: Vec<_> = tag.split('=').collect();
+                    name_value[0] == "emotes"
+                })
+                .unwrap_or_default();
+            let emote_ranges = parse_emote_ranges(emotes_tag.get(7..).unwrap_or_default());
             return IrcMessage {
                 kind: IrcMessageKind::Chat,
                 msg_id: Some(msg_id.into()),
                 chat_msg: Some(caps["chat_msg"].into()),
                 channel: Some(caps["channel"].into()),
                 user: Some(caps["user"].into()),
+                emote_ranges,
             };
         }
     } else if LOGIN_FAILED_PTN.is_match(msg_str) {
@@ -334,10 +428,126 @@ mod tests {
     }
 
     #[test]
+    fn parse_message_extracts_emote_ranges() {
+        let message = parse_message(
+            "@badge-info=;badges=;emotes=25:0-4,6-10;id=abc :u!u@u.tmi.twitch.tv PRIVMSG #chan :Kappa Kappa",
+        );
+        assert_eq!(message.emote_ranges, vec![(0, 4), (6, 10)]);
+    }
+
+    #[test]
+    fn parse_message_empty_emotes_yields_no_ranges() {
+        let message = parse_message(
+            "@badge-info=;badges=;emotes=;id=abc :u!u@u.tmi.twitch.tv PRIVMSG #chan :hello",
+        );
+        assert!(message.emote_ranges.is_empty());
+    }
+
+    #[test]
     fn parse_smile_emoji_message() {
         let message = parse_message(
             "@badge-info=;badges=broadcaster/1;client-nonce=c047bc731be346ced547db43b626c763;color=#151538;display-name=解樹形図_祈;emotes=;first-msg=0;flags=;id=370397f6-fd48-4190-bdf2-c8547a048df8;mod=0;returning-chatter=0;room-id=173660453;subscriber=0;tmi-sent-ts=1716111351803;turbo=0;user-id=173660453;user-type= :testuser!somthing@something.tmi.twitch.tv PRIVMSG #somechannel :hello :)",
         );
         assert_eq!(message.chat_msg.unwrap().as_str(), "hello :)");
+    }
+
+    #[test]
+    fn parse_emote_ranges_empty() {
+        assert_eq!(parse_emote_ranges(""), Vec::<(usize, usize)>::new());
+    }
+
+    #[test]
+    fn parse_emote_ranges_single() {
+        assert_eq!(parse_emote_ranges("25:0-4"), vec![(0, 4)]);
+    }
+
+    #[test]
+    fn parse_emote_ranges_same_emote_multiple() {
+        assert_eq!(parse_emote_ranges("25:0-4,12-16"), vec![(0, 4), (12, 16)]);
+    }
+
+    #[test]
+    fn parse_emote_ranges_multiple_emotes() {
+        assert_eq!(parse_emote_ranges("25:0-4/1902:6-10"), vec![(0, 4), (6, 10)]);
+    }
+
+    #[test]
+    fn split_message_emotes_no_ranges() {
+        let (cleaned, emotes) = split_message_emotes("hello world", &[]);
+        assert_eq!(cleaned, "hello world");
+        assert!(emotes.is_empty());
+    }
+
+    #[test]
+    fn split_message_emotes_trailing_emote() {
+        let (cleaned, emotes) = split_message_emotes("Hello DinoDance", &[(6, 14)]);
+        assert_eq!(cleaned, "Hello");
+        assert_eq!(emotes, vec!["DinoDance".to_string()]);
+    }
+
+    #[test]
+    fn split_message_emotes_middle_emote_collapses_space() {
+        let (cleaned, emotes) = split_message_emotes("a Kappa b", &[(2, 6)]);
+        assert_eq!(cleaned, "a b");
+        assert_eq!(emotes, vec!["Kappa".to_string()]);
+    }
+
+    #[test]
+    fn split_message_emotes_japanese_codepoint() {
+        let (cleaned, emotes) = split_message_emotes("こんにちは DinoDance", &[(6, 14)]);
+        assert_eq!(cleaned, "こんにちは");
+        assert_eq!(emotes, vec!["DinoDance".to_string()]);
+    }
+
+    #[test]
+    fn split_message_emotes_emote_only() {
+        let (cleaned, emotes) = split_message_emotes("DinoDance", &[(0, 8)]);
+        assert_eq!(cleaned, "");
+        assert_eq!(emotes, vec!["DinoDance".to_string()]);
+    }
+
+    #[test]
+    fn split_message_emotes_dedup_same_emote() {
+        let (cleaned, emotes) = split_message_emotes("Kappa hi Kappa", &[(0, 4), (9, 13)]);
+        assert_eq!(cleaned, "hi");
+        assert_eq!(emotes, vec!["Kappa".to_string()]);
+    }
+
+    #[test]
+    fn split_message_emotes_keeps_distinct_emotes() {
+        let (cleaned, emotes) = split_message_emotes("hi Kappa PogChamp", &[(3, 7), (9, 16)]);
+        assert_eq!(cleaned, "hi");
+        assert_eq!(emotes, vec!["Kappa".to_string(), "PogChamp".to_string()]);
+    }
+
+    #[test]
+    fn split_message_emotes_orders_by_text_position() {
+        // Ranges passed unsorted (Kappa range first), but Kappa appears later in
+        // the text than PogChamp. Output must follow text position, not input order.
+        let (cleaned, emotes) =
+            split_message_emotes("PogChamp hi Kappa", &[(12, 16), (0, 7)]);
+        assert_eq!(cleaned, "hi");
+        assert_eq!(emotes, vec!["PogChamp".to_string(), "Kappa".to_string()]);
+    }
+
+    #[test]
+    fn translated_reply_body_empty_stdout_is_none() {
+        assert_eq!(translated_reply_body("   \n", "DinoDance"), None);
+    }
+
+    #[test]
+    fn translated_reply_body_no_emotes() {
+        assert_eq!(
+            translated_reply_body("hello\n", ""),
+            Some("hello".to_string())
+        );
+    }
+
+    #[test]
+    fn translated_reply_body_appends_emotes() {
+        assert_eq!(
+            translated_reply_body("hello\n", "DinoDance"),
+            Some("hello DinoDance".to_string())
+        );
     }
 }

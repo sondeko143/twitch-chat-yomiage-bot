@@ -45,10 +45,12 @@
    `emotes` タグが空（`emotes=`）または無い場合は空 `Vec`。
 
 2. **分割**: 純粋関数 `split_message_emotes(chat_msg, &ranges) -> (cleaned: String, emotes: Vec<String>)`
-   で、本文を「emote を除いた翻訳用テキスト（`cleaned`）」と「出現順の emote 文字列リスト（`emotes`）」に分割する。
+   で、本文を「emote を除いた翻訳用テキスト（`cleaned`）」と「emote 文字列リスト（`emotes`）」に分割する。
    - 切り出しは **コードポイント単位**（`chars()` ベース）で行う。`emotes` タグの位置はバイトではなく
      コードポイントオフセットのため。
    - emote を除去して生じた余分な空白は詰める（連続空白を 1 個に、前後をトリム）。
+   - **同一 emote が複数回出現した場合は 1 つにまとめる**。重複は emote 文字列で判定し、最初に出現した
+     順序を保つ（例: `DinoDance ... DinoDance` → `["DinoDance"]`）。`cleaned` 側からは全出現を除去する。
 
 3. **返信本文の決定**（`process_message` 内）:
    - `cleaned` が空（emote のみのメッセージ）→ 翻訳コマンドを呼ばず、返信本文 = emote を空白区切りで連結したもの。
@@ -69,6 +71,7 @@
   - 空文字列 → `vec![]`。
 - `split_message_emotes(chat_msg: &str, ranges: &[(usize, usize)]) -> (String, Vec<String>)`
   - ネットワーク非依存。コードポイント単位で `cleaned` と `emotes` を構築。
+  - `emotes` は同一 emote 文字列を最初の 1 つにまとめる（出現順は保持）。
 - `process_message` は上記を呼び出して返信本文を組み立てる薄い層に保つ。
 
 `parse_message` は `emotes` タグを `parse_emote_ranges` でパースして `IrcMessage.emote_ranges` に格納する。
@@ -101,7 +104,9 @@
   （`こんにちは ` で 6 コードポイント、`DinoDance` が 6-14）→ (`"こんにちは"`, `["DinoDance"]`)。
   バイトオフセットで切ると壊れることの検証。
 - emote のみ: `"DinoDance"` / `[(0, 8)]` → (`""`, `["DinoDance"]`)
-- 同一 emote 複数: `"Kappa hi Kappa"` → (`"hi"`, `["Kappa", "Kappa"]`)
+- 同一 emote 複数（まとめる）: `"Kappa hi Kappa"` / `[(0, 4), (9, 13)]` → (`"hi"`, `["Kappa"]`)
+- 異なる emote 複数（まとめない）: `"hi Kappa PogChamp"` / `[(3, 7), (9, 16)]` →
+  (`"hi"`, `["Kappa", "PogChamp"]`)
 
 ### 既存テスト
 - `parse_smile_emoji_message`（`emotes=` 空ケース）が引き続き通ること = 後方互換性の確認。

@@ -328,6 +328,7 @@ struct IrcMessage {
     chat_msg: Option<String>,
     user: Option<String>,
     channel: Option<String>,
+    emote_ranges: Vec<(usize, usize)>,
 }
 
 fn parse_message(msg_str: &str) -> IrcMessage {
@@ -351,12 +352,21 @@ fn parse_message(msg_str: &str) -> IrcMessage {
                 })
                 .unwrap_or_default();
             let msg_id = id_tag.get(3..).unwrap_or_default();
+            let emotes_tag = tags
+                .split(';')
+                .find(|tag| {
+                    let name_value: Vec<_> = tag.split('=').collect();
+                    name_value[0] == "emotes"
+                })
+                .unwrap_or_default();
+            let emote_ranges = parse_emote_ranges(emotes_tag.get(7..).unwrap_or_default());
             return IrcMessage {
                 kind: IrcMessageKind::Chat,
                 msg_id: Some(msg_id.into()),
                 chat_msg: Some(caps["chat_msg"].into()),
                 channel: Some(caps["channel"].into()),
                 user: Some(caps["user"].into()),
+                emote_ranges,
             };
         }
     } else if LOGIN_FAILED_PTN.is_match(msg_str) {
@@ -398,6 +408,22 @@ mod tests {
             "elapsed too long, kill_on_drop may not have worked: {:?}",
             elapsed
         );
+    }
+
+    #[test]
+    fn parse_message_extracts_emote_ranges() {
+        let message = parse_message(
+            "@badge-info=;badges=;emotes=25:0-4,6-10;id=abc :u!u@u.tmi.twitch.tv PRIVMSG #chan :Kappa Kappa",
+        );
+        assert_eq!(message.emote_ranges, vec![(0, 4), (6, 10)]);
+    }
+
+    #[test]
+    fn parse_message_empty_emotes_yields_no_ranges() {
+        let message = parse_message(
+            "@badge-info=;badges=;emotes=;id=abc :u!u@u.tmi.twitch.tv PRIVMSG #chan :hello",
+        );
+        assert!(message.emote_ranges.is_empty());
     }
 
     #[test]

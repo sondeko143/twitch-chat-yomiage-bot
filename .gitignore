@@ -3,3 +3,6 @@ config.toml
 .env
 db/**
 target/**
+.env.*
+!.env.example
+thumbnails.jpg

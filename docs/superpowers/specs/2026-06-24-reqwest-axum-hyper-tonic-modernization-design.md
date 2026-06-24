@@ -62,14 +62,14 @@
 1. `vstp_builder/Cargo.toml`: `tonic-build 0.9` → `tonic-prost-build 0.14`（0.12 退避時は `tonic-build 0.12`）。
 2. `vstp_builder/src/main.rs`: `tonic_build::configure().out_dir(...).compile(&[...], &[...])` → 新 API（`tonic_prost_build::configure().out_dir(...).compile_protos(&[...], &[...])`。正確なシンボルは実装時に `cargo doc`/ビルドエラーで確認）。
 3. `vstreamer_protos/Cargo.toml`: `prost 0.11`→`0.14`、`tonic 0.9`→`0.14`、生成コードが要求するなら `tonic-prost 0.14` を追加。
-4. `voicerecog.rs` を再生成しコミット。`version` を 0.1.1 → 0.1.2。
+4. `voicerecog.rs` を再生成しコミット。`vstreamer_protos/Cargo.toml` の `version` を 0.1.1 → 0.1.2。
 5. ビルド確認（`cd rust && cargo build`）。
-6. push（main）→ 新しい git rev を取得。
+6. main へ push → その commit に **semver タグ `v0.1.2`** を打って push（既存慣習: `v0.1.1` タグは現 rev `f1d8e7e` を指す）。`.github` の `main-<sha>` 自動タグは Python publish 用で別物。
 
 ### Repo B: `twitch-chat-yomiage-bot`
 
 - **`vstc`**:
-  - `Cargo.toml`: `tonic 0.9`→`0.14`、dev-dep `tonic-reflection 0.9`→`0.14`、`vstreamer_protos` の git rev / version を Repo A の新版へ更新。
+  - `Cargo.toml`: `tonic 0.9`→`0.14`、dev-dep `tonic-reflection 0.9`→`0.14`、`vstreamer_protos` の参照を **`{ git = "...", tag = "v0.1.2" }`** へ変更（現状は `version = "0.1.1"` のみで main 追従＋Cargo.lock 固定。明示タグ固定に切り替えて再現性を上げる）。
   - `src/lib.rs`: `tonic::transport::Endpoint::new` / `.connect_timeout` / `.timeout` / `CommanderClient::connect(endpoint)` / `tonic::Request::new` / `channel.process_command().await` の 0.14 API 追従。`tonic::transport::Error` / `tonic::Status` の `From` 実装はそのまま使える見込み。
   - `tests/test.rs`: `tonic::transport::Server::builder().add_service(...)` / `.serve(addr)`、`tonic-reflection`（`Builder::configure().register_encoded_file_descriptor_set(FILE_DESCRIPTOR_SET)`）、`#[tonic::async_trait]` ＋ mockall の `Commander` 実装を 0.14 へ。**サーバ trait の async 化方式が変わると mock 定義の調整が必要**（最大のリスク。§6 参照）。
 - **`tcyb`**:
@@ -92,7 +92,7 @@
    を一時追加し、ローカルの再生成 protos に対して両 repo を同時検証する。
 2. protos 側を仕上げる（再生成・ビルド緑）。
 3. 本体側（vstc → tcyb → igdb）を移行し `just check` を緑にする。
-4. **確定**: protos を push（main, 0.1.2）→ `vstc/Cargo.toml` の git rev/version を新版へ固定 → **`[patch]` を削除**（commit に残さない）。
+4. **確定**: protos を push（main, 0.1.2）→ **`v0.1.2` タグを打って push** → `vstc/Cargo.toml` を `{ git = "...", tag = "v0.1.2" }` に変更 → **`[patch]` を削除**（commit に残さない）。
 5. `cargo update` 後に `cargo tree -i rustls-pemfile`（=did not match）と `cargo tree -i hyper`（=1.x 単一）を確認。
 6. `just ci` 全緑を確認して PR。
 

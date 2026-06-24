@@ -13,7 +13,7 @@ workspace = true
 [dependencies]
 clap = { version = "4.3.0", features = ["derive"] }
 tokio = "1.28.1"
-vstreamer_protos = { git = "https://github.com/sondeko143/vstreamer-protos", version = "0.1.0" }
+vstreamer_protos = { git = "https://github.com/sondeko143/vstreamer-protos", tag = "v0.1.2" }
 vstc = { path = "../vstc" }
 hound = "3.5"
 anyhow = "1.0.71"

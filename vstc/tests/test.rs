@@ -3,7 +3,7 @@ use tonic::transport::server::Router;
 use tonic::transport::Server;
 use tonic::Request;
 use tonic::Status;
-use tonic_reflection::pb::FILE_DESCRIPTOR_SET;
+use tonic_reflection::pb::v1::FILE_DESCRIPTOR_SET;
 use tonic_reflection::server::Builder;
 use vstc::*;
 use vstreamer_protos::commander_server::Commander;
@@ -30,7 +30,7 @@ mock! {
 pub fn build(cmd: impl Commander) -> Router {
     let reflection_service = Builder::configure()
         .register_encoded_file_descriptor_set(FILE_DESCRIPTOR_SET)
-        .build()
+        .build_v1()
         .expect("reflection service could not build");
 
     Server::builder()

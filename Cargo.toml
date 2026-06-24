@@ -10,3 +10,7 @@ members = ["tcyb", "vstc", "vstc_cli", "igdb"]
 [workspace.lints.clippy]
 cognitive_complexity = "warn"
 too_many_lines = "warn"
+
+# 開発中のみ: ローカル再生成 protos を参照する。確定タスク(Task 12)で削除すること。
+[patch."https://github.com/sondeko143/vstreamer-protos"]
+vstreamer_protos = { path = "../vstreamer-protos/rust/vstreamer_protos" }

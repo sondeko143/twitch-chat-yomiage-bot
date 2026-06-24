@@ -4,6 +4,7 @@ mod channel;
 mod chat;
 mod eventsub;
 mod irc;
+mod profiling;
 mod settings;
 mod store;
 mod yomiage;

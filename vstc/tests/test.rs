@@ -132,9 +132,8 @@ async fn process_command_times_out_when_server_silent() {
     .await;
     let elapsed = start.elapsed();
 
-    let inner = outcome.expect(
-        "process_command did not return within 15s — internal timeout not enforced",
-    );
+    let inner =
+        outcome.expect("process_command did not return within 15s — internal timeout not enforced");
     assert!(
         inner.is_err(),
         "expected connect/RPC error against silent server, got Ok"

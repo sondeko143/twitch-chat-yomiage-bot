@@ -24,11 +24,10 @@ async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
     let args = Cli::parse();
     let mut config_builder = config::Config::builder();
-    config_builder = config_builder
-        .add_source(config::Environment::with_prefix("cb").try_parsing(true));
+    config_builder =
+        config_builder.add_source(config::Environment::with_prefix("cb").try_parsing(true));
     if let Some(path) = args.config {
-        config_builder =
-            config_builder.add_source(config::File::with_name(path.to_str().unwrap()));
+        config_builder = config_builder.add_source(config::File::with_name(path.to_str().unwrap()));
     }
     let config = config_builder.build()?;
     let settings: Settings = config.try_deserialize()?;

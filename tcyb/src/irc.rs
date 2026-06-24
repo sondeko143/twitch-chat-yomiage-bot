@@ -477,7 +477,10 @@ mod tests {
 
     #[test]
     fn parse_emote_ranges_multiple_emotes() {
-        assert_eq!(parse_emote_ranges("25:0-4/1902:6-10"), vec![(0, 4), (6, 10)]);
+        assert_eq!(
+            parse_emote_ranges("25:0-4/1902:6-10"),
+            vec![(0, 4), (6, 10)]
+        );
     }
 
     #[test]
@@ -533,8 +536,7 @@ mod tests {
     fn split_message_emotes_orders_by_text_position() {
         // Ranges passed unsorted (Kappa range first), but Kappa appears later in
         // the text than PogChamp. Output must follow text position, not input order.
-        let (cleaned, emotes) =
-            split_message_emotes("PogChamp hi Kappa", &[(12, 16), (0, 7)]);
+        let (cleaned, emotes) = split_message_emotes("PogChamp hi Kappa", &[(12, 16), (0, 7)]);
         assert_eq!(cleaned, "hi");
         assert_eq!(emotes, vec!["PogChamp".to_string(), "Kappa".to_string()]);
     }

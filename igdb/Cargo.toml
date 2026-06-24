@@ -5,10 +5,13 @@ edition = "2021"
 description = "IGDB artwork thumbnail generator"
 publish = false
 
+[lints]
+workspace = true
+
 [dependencies]
 anyhow = "1.0.71"
 clap = { version = "4.2.7", features = ["derive"] }
-config = { version = "0.13.3", features = ["toml"] }
+config = { version = "0.13.3", default-features = false, features = ["toml"] }
 const_format = "0.2.30"
 dotenvy = "0.15"
 image = "0.24.6"

@@ -1,3 +1,12 @@
 [workspace]
 resolver = "2"
 members = ["tcyb", "vstc", "vstc_cli", "igdb"]
+
+# 複雑度系 lint をワークスペース全体で有効化する。
+# cognitive_complexity(nursery) / too_many_lines(pedantic) は allow-by-default のため
+# ここで明示的に warn 化しないと発火しない。閾値は clippy.toml 側で調整する
+# (cognitive-complexity-threshold / too-many-lines-threshold)。
+# 各メンバの Cargo.toml に [lints] workspace = true を設定して継承させる。
+[workspace.lints.clippy]
+cognitive_complexity = "warn"
+too_many_lines = "warn"

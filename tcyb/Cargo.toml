@@ -20,7 +20,7 @@ futures-util = "0.3.28"
 jfs = "0.9.0"
 log = "0.4.17"
 regex = "1.8.1"
-reqwest = { version = "0.13", features = ["json", "query", "form"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "query", "form", "native-tls"] }
 serde = { version = "1.0.162", features = ["derive"] }
 simple_logger = "4.1.0"
 tokio = { version = "1.28.1", features = ["full"] }

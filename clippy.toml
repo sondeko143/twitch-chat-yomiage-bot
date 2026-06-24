@@ -1,0 +1,42 @@
+# clippy 設定ファイル（複雑度・サイズ系 lint の閾値）
+# 実行: cargo clippy --workspace --all-targets
+#       cargo clippy --workspace -- -D warnings        (警告をエラー扱いにしてゲート化)
+# ドキュメント: https://doc.rust-lang.org/clippy/configuration.html
+#
+# ─────────────────────────────────────────────────────────────────────────
+# 重要: 閾値を書くだけでは発火しない lint がある
+# ─────────────────────────────────────────────────────────────────────────
+#  - cognitive_complexity : nursery (allow-by-default)。下記いずれかで明示有効化が必要。
+#  - too_many_lines       : pedantic (allow-by-default)。同上。
+#  - too_many_arguments   : complexity グループ。既定で有効 → 閾値変更だけで効く。
+#  - type_complexity      : complexity グループ。既定で有効 → 閾値変更だけで効く。
+#
+# cognitive_complexity / too_many_lines を恒久的に有効化する方法（2択）:
+#   (A) 都度のアドホック実行（ファイル変更なし・お試し向き）:
+#         cargo clippy --workspace -- -W clippy::cognitive_complexity -W clippy::too_many_lines
+#   (B) ワークスペース全体に常設（推奨・要 Cargo.toml 編集）:
+#         ルート Cargo.toml に
+#           [workspace.lints.clippy]
+#           cognitive_complexity = "warn"
+#           too_many_lines       = "warn"
+#         を追加し、各メンバ(tcyb/vstc/vstc_cli/igdb)の Cargo.toml に
+#           [lints]
+#           workspace = true
+#         を追加する。
+
+# ─────────────────────────────────────────────────────────────────────────
+# 閾値（このプロジェクト用の初期値。ノイズが多ければ緩める / 厳しくしたければ下げる）
+# ─────────────────────────────────────────────────────────────────────────
+
+# 認知的複雑度。関数がこの値を超えると cognitive_complexity が警告（要・上記の有効化）。
+# clippy 既定値は 25。bot のパーサ/イベント処理は分岐が多くなりがちなので、まず既定で開始。
+cognitive-complexity-threshold = 25
+
+# 1 関数の引数の数。これを超えると too_many_arguments（既定で有効）。clippy 既定 7。
+too-many-arguments-threshold = 7
+
+# 1 関数の行数。これを超えると too_many_lines（要・上記の有効化）。clippy 既定 100 を少し緩和。
+too-many-lines-threshold = 120
+
+# 型の複雑さ（ネストしたジェネリクス等）。too_many_type_complexity（既定で有効）。clippy 既定 250。
+type-complexity-threshold = 250

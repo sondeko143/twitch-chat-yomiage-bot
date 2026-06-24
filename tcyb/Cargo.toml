@@ -3,6 +3,7 @@ name = "tcyb"
 version = "0.1.0"
 edition = "2021"
 description = "Twitch chat yomiage bot"
+publish = false
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -11,7 +12,7 @@ axum = "0.6.18"
 clap = { version = "4.2.7", features = ["derive"] }
 config = { version = "0.13.3", features = ["toml", "indexmap"] }
 const_format = "0.2.30"
-dotenv = "0.15.0"
+dotenvy = "0.15"
 futures-util = "0.3.28"
 hyper = "0.14.26"
 jfs = "0.9.0"

@@ -33,7 +33,7 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    dotenv::dotenv().ok();
+    dotenvy::dotenv().ok();
     let args = Cli::parse();
     let mut config_builder = config::Config::builder()
         .set_default("listen_address", "localhost:8000")?

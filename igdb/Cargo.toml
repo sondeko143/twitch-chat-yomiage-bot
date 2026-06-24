@@ -3,13 +3,14 @@ name = "igdb"
 version = "0.1.0"
 edition = "2021"
 description = "IGDB artwork thumbnail generator"
+publish = false
 
 [dependencies]
 anyhow = "1.0.71"
 clap = { version = "4.2.7", features = ["derive"] }
 config = { version = "0.13.3", features = ["toml"] }
 const_format = "0.2.30"
-dotenv = "0.15.0"
+dotenvy = "0.15"
 image = "0.24.6"
 log = "0.4.17"
 reqwest = { version = "0.11.17", features = ["json"] }

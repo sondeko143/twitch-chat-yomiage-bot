@@ -21,7 +21,7 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    dotenv::dotenv().ok();
+    dotenvy::dotenv().ok();
     let args = Cli::parse();
     let mut config_builder = config::Config::builder();
     config_builder = config_builder

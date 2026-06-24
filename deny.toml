@@ -1,0 +1,76 @@
+# cargo-deny 設定ファイル
+# 実行: cargo deny check          (全チェック)
+#       cargo deny check advisories | licenses | bans | sources
+# ドキュメント: https://embarkstudios.github.io/cargo-deny/
+
+# ---------------------------------------------------------------------------
+# 脆弱性・メンテ状況の監査 (RustSec advisory-db)
+# ---------------------------------------------------------------------------
+[advisories]
+version = 2
+# unmaintained 通知の対象範囲。"workspace" は自分が直接依存するクレートのみ対象とし、
+# 制御できない深い推移的依存 (rustls-pemfile/yaml-rust 等) のノイズを抑える。
+unmaintained = "workspace"
+# 脆弱性 (vulnerability)・unsound は既定でエラー。
+# 誤検知や対応保留中のものは ID を追記して個別に無視する。
+ignore = [
+    # "RUSTSEC-0000-0000",
+    # { id = "RUSTSEC-0000-0000", reason = "対応待ち。次版で解消予定" },
+]
+
+# ---------------------------------------------------------------------------
+# ライセンス監査
+# ---------------------------------------------------------------------------
+[licenses]
+version = 2
+confidence-threshold = 0.8
+# Rust エコシステムで一般的な許可ライセンス群。
+# `cargo deny check licenses` で未許可ライセンスが出たらここに追記する。
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "MPL-2.0",
+    "CC0-1.0",
+    "BSL-1.0",
+    "OpenSSL",
+]
+
+# 個別クレートにだけ別ライセンスを許可する場合の例:
+# [[licenses.exceptions]]
+# name = "ring"
+# allow = ["OpenSSL"]
+
+[licenses.private]
+# 自作ワークスペースクレート (tcyb/vstc/vstc_cli/igdb) は license 未設定のため対象外にする。
+# ※ ignore が効くのは publish = false のクレートのみ。各クレートに publish = false を設定済み。
+ignore = true
+# ワークスペース外の自作 git 依存も license 未設定のため対象外にする。
+ignore-sources = ["https://github.com/sondeko143/vstreamer-protos"]
+
+# ---------------------------------------------------------------------------
+# 依存の重複・ワイルドカード指定の検出
+# ---------------------------------------------------------------------------
+[bans]
+# 同一クレートの複数バージョンは警告に留める (既に重複があり deny だと即失敗するため)。
+multiple-versions = "warn"
+wildcards = "warn"
+# 重複時に依存ツリーを表示する。
+highlight = "all"
+
+# ---------------------------------------------------------------------------
+# 依存の取得元 (registry / git) の制限
+# ---------------------------------------------------------------------------
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+# crates.io 以外の git 依存はここで明示的に許可する。
+allow-git = [
+    "https://github.com/sondeko143/vstreamer-protos",
+]

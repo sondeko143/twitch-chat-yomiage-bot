@@ -69,14 +69,13 @@ struct ServerState {
     listen_addr: String,
 }
 
-async fn start_server(addr: SocketAddr, state: ServerState) -> Result<(), hyper::Error> {
+async fn start_server(addr: SocketAddr, state: ServerState) -> Result<(), std::io::Error> {
     let app = Router::new()
         .route("/", get(auth))
         .route("/callback", get(callback))
         .with_state(state);
-    axum::Server::bind(&addr)
-        .serve(app.into_make_service())
-        .await?;
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    axum::serve(listener, app).await?;
     Ok(())
 }
 

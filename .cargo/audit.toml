@@ -1,0 +1,17 @@
+# cargo-audit 設定ファイル
+# 実行: cargo audit
+# 配置: プロジェクト直下の .cargo/audit.toml を自動で読み込む。
+# ドキュメント: https://github.com/rustsec/rustsec/tree/main/cargo-audit
+#
+# [output].deny による警告のエラー昇格は意図的に設定していない:
+#   - 脆弱性 (vulnerability) は既定でエラー (exit≠0) になる。
+#   - unmaintained/yanked を deny にすると、制御できない推移的依存
+#     (rustls-pemfile / yaml-rust 等) でも失敗し、cargo-deny 側の
+#     unmaintained = "workspace" 方針と矛盾するため避ける。
+#   - ライセンス・重複バージョン・取得元を含む包括的なゲートは cargo-deny が担当。
+
+[advisories]
+# 無視する脆弱性 ID を指定する (対応待ち・誤検知など)。
+ignore = [
+    # "RUSTSEC-0000-0000",
+]

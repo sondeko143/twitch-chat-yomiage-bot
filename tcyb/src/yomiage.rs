@@ -24,7 +24,11 @@ async fn refresh_tokens_with_backoff(
     let mut attempt = 0u32;
     let mut backoff = TOKEN_REFRESH_INITIAL_BACKOFF_SECS;
     loop {
-        match store.update_tokens(client_id, client_secret).await {
+        match store
+            .update_tokens(client_id, client_secret)
+            .instrument(tracing::info_span!("token_refresh"))
+            .await
+        {
             Ok(_) => return Ok(()),
             Err(e) => {
                 let is_permanent = matches!(

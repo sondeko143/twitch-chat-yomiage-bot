@@ -34,28 +34,36 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let _profile = profiling::init();
     dotenvy::dotenv().ok();
     let args = Cli::parse();
-    let mut config_builder = config::Config::builder()
-        .set_default("listen_address", "localhost:8000")?
-        .set_default("greeting_template", "user_name is now following!")?;
-    config_builder = config_builder.add_source(
-        config::Environment::with_prefix("cb")
-            .try_parsing(true)
-            .list_separator(",")
-            .with_list_parse_key("operations"),
-    );
-    if args.config.is_some() {
-        config_builder = config_builder.add_source(config::File::with_name(
-            args.config.unwrap().to_str().unwrap(),
-        ));
+
+    let settings: Settings = {
+        let _span = tracing::info_span!("config_build").entered();
+        let mut config_builder = config::Config::builder()
+            .set_default("listen_address", "localhost:8000")?
+            .set_default("greeting_template", "user_name is now following!")?;
+        config_builder = config_builder.add_source(
+            config::Environment::with_prefix("cb")
+                .try_parsing(true)
+                .list_separator(",")
+                .with_list_parse_key("operations"),
+        );
+        if let Some(path) = args.config.as_ref() {
+            config_builder = config_builder
+                .add_source(config::File::with_name(path.to_str().unwrap()));
+        }
+        let config = config_builder.build()?;
+        config.try_deserialize()?
+    };
+
+    {
+        let _span = tracing::info_span!("logger_init").entered();
+        simple_logger::SimpleLogger::new()
+            .env()
+            .with_local_timestamps()
+            .init()?;
     }
-    let config = config_builder.build()?;
-    let settings: Settings = config.try_deserialize()?;
-    simple_logger::SimpleLogger::new()
-        .env()
-        .with_local_timestamps()
-        .init()?;
 
     match &args.command {
         Some(Commands::ReadChat {}) => {

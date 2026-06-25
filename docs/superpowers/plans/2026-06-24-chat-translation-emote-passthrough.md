@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- パッケージ名は `tcyb`。テストは `cargo test -p tcyb` で実行する（作業ディレクトリはリポジトリルート `c:\Users\me_my\vstreamer\twitch-chat-yomiage-bot`）。
+- パッケージ名は `tcyb`。テストは `cargo test -p tcyb` で実行する（作業ディレクトリはリポジトリルート）。
 - 既存モジュールのスタイルに従う（`if let` ベース、`lazy_static` 正規表現、`info!`/`warn!` ロギング）。
 - `emotes` タグの位置は **コードポイントオフセット**。バイトインデックスでは切らない（`chars()` ベース）。
 - 対象は Twitch ネイティブ emote のみ。TTS（`send_chat_message_to_speak`）と外部翻訳コマンドのインターフェースは変更しない。

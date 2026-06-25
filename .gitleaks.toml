@@ -1,0 +1,46 @@
+# gitleaks 設定 — シークレット + ネットワーク/PII 検出ゲート（`just gitleaks` / `just ci`）
+#
+# 走査対象は「コミット履歴」（= `gitleaks git`）。gitignore 済みのローカル機密
+# （.env.* / db/** / target/**）やビルド成果物は対象外で、「リポジトリに
+# シークレット等をコミットしていないか」だけを高速に検査する。
+#
+# 役割分担:
+#   - 本ファイル(gitleaks) … 本物のシークレット + private IP + AmiVoice appkey
+#   - xtask check-env-leak … 個人/マシン依存の絶対パス（ホーム・AppData・Claude
+#     内部メモリパス等）の作業ツリー走査（`just check` で高速・コミット前に検出）。
+#     ※ パス検出を gitleaks に寄せないのは、過去にコミットされた漏洩パスが
+#       git 履歴に残存しており、履歴走査だと既知の過去コミットを再フラグする
+#       ため（履歴は低リスクのため書き換えない方針）。
+# ドキュメント: https://github.com/gitleaks/gitleaks
+
+title = "twitch-chat-yomiage-bot gitleaks config"
+
+# gitleaks 標準ルール群（private key / AWS / GitHub PAT / Slack /
+# 高エントロピー generic-api-key 等）をベースに使う。
+[extend]
+useDefault = true
+
+# ── プロジェクト固有ルール ───────────────────────────────────────────
+[[rules]]
+id = "private-ipv4"
+description = "Private/RFC1918 IPv4 address (LAN topology / environment leak)"
+regex = '''\b(?:10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|172\.(?:1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3}|192\.168\.[0-9]{1,3}\.[0-9]{1,3})\b'''
+tags = ["env", "pii", "network"]
+
+[[rules]]
+id = "amivoice-appkey-inline"
+description = "AmiVoice appkey assigned inline (secrets belong in gitignored config, never committed)"
+regex = '''(?i)appkey\s*[:=]\s*['"][A-Za-z0-9._\-+/=]{20,}['"]'''
+tags = ["secret", "amivoice"]
+
+# ── allowlist（明確な非機密のみ）─────────────────────────────────────
+# 重要 — CLAUDE.md の品質ゲート方針: 本物のシークレットを allowlist で黙らせ
+# ない。検出されたら値をローテーション（無効化・再発行）し、追跡から外して
+# 履歴からも除去する。allowlist は redaction プレースホルダ等の明確な非機密に
+# 限定する。誤検知が出たら paths / regexes / stopwords を追記する。
+[allowlist]
+description = "Redaction placeholders that are not leaks"
+regexes = [
+  '''<USER>''',
+  '''<NAS_HOST>''',
+]

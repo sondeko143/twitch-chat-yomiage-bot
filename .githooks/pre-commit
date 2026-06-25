@@ -1,0 +1,25 @@
+#!/bin/sh
+# pre-commit — leak ゲートをコミット前に実行する。
+#
+# 有効化: リポジトリごとに一度 `just setup-hooks`
+#         （= git config core.hooksPath .githooks）。
+# 緊急回避: `git commit --no-verify`（多用しないこと。最終ゲートは `just ci`）。
+#
+# 実行内容:
+#   1. check-env-leak  … 個人/マシン依存の絶対パス（作業ツリーの追跡ファイル）
+#   2. gitleaks --staged … シークレット / private IP / AmiVoice appkey（ステージ済み差分）
+#
+# gitleaks 未導入時はシークレット検査のみスキップ（パス検査は cargo で必ず動く）。
+set -e
+
+echo "pre-commit: check-env-leak ..."
+cargo run -q -p xtask -- check-env-leak
+
+if command -v gitleaks >/dev/null 2>&1; then
+	echo "pre-commit: gitleaks (staged) ..."
+	gitleaks git --staged --no-banner --redact --config .gitleaks.toml
+else
+	echo "pre-commit: gitleaks 未導入のためシークレット検査をスキップ（scoop install gitleaks）" >&2
+fi
+
+echo "pre-commit: OK"

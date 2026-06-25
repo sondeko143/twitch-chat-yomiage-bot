@@ -1,0 +1,4 @@
+# git フック/シェルスクリプトは LF を強制する。
+# CRLF でチェックアウトされると sh が "bad interpreter" になり pre-commit が動かない。
+.githooks/** text eol=lf
+*.sh text eol=lf

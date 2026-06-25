@@ -14,7 +14,7 @@
 - artwork の機能・出力（カレントディレクトリに `thumbnails.jpg` 生成）の挙動は変えない。移設のみ。
 - Twitch アプリは再登録しない。`igdb` は `tcyb` と同じ `.env` / 設定（env prefix `cb`、`--config`）から `client_id`/`client_secret` を読む。
 - `igdb` には axum を入れない。`auth_headers` は `reqwest::header::{HeaderMap, HeaderValue}` を使う。
-- 各ステップのビルド確認はワークスペースルート `c:\Users\me_my\vstreamer\twitch-chat-yomiage-bot` で行う。
+- 各ステップのビルド確認はワークスペースルートで行う。
 - このリファクタは挙動不変・既存テストなしのため、各ステップの検証は `cargo build`（および最終タスクで `cargo tree` と手動実行）で行う。
 
 ---

@@ -1,13 +1,16 @@
-//! 開発用タスクランナー。入口は justfile に集約: `just analyze-trace [path]`
-//! （= `cargo run -p xtask -- analyze-trace [path]`）。
+//! 開発用タスクランナー。入口は justfile に集約: `just <recipe>`。
 //!
 //! コマンド:
 //!   analyze-trace [path]   just profile-startup が出す Chrome trace を解析する
 //!                          (既定 path: target/profile/trace.json)
+//!   check-env-leak         追跡ファイルへの環境固有パス混入を検査する
+//!                          (個人/マシン依存の絶対パスをゲート。leak.rs 参照)
 //!
 //! 注意: span の instances/active は async では wall-clock ではない
 //! (.instrument() は await ごとに re-enter する)。回数はログで数え、
 //! 待ち時間は "no-span gaps" で見ること。
+
+mod leak;
 
 use serde::Deserialize;
 use std::cmp::Ordering;
@@ -168,13 +171,20 @@ fn analyze_trace(path: &str) -> Result<(), Box<dyn std::error::Error>> {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    if args.get(1).map(String::as_str) != Some("analyze-trace") {
-        eprintln!("usage: just analyze-trace [path]");
-        eprintln!("  (or: cargo run -p xtask -- analyze-trace [path]; 既定 path: {DEFAULT_TRACE})");
-        std::process::exit(2);
-    }
-    let path = args.get(2).map(String::as_str).unwrap_or(DEFAULT_TRACE);
-    if let Err(e) = analyze_trace(path) {
+    let result = match args.get(1).map(String::as_str) {
+        Some("analyze-trace") => {
+            let path = args.get(2).map(String::as_str).unwrap_or(DEFAULT_TRACE);
+            analyze_trace(path)
+        }
+        Some("check-env-leak") => leak::run(),
+        _ => {
+            eprintln!("usage: cargo run -p xtask -- <command>");
+            eprintln!("  analyze-trace [path]   Chrome trace を解析（既定 path: {DEFAULT_TRACE}）");
+            eprintln!("  check-env-leak         追跡ファイルへの環境固有パス混入を検査");
+            std::process::exit(2);
+        }
+    };
+    if let Err(e) = result {
         eprintln!("error: {e}");
         std::process::exit(1);
     }

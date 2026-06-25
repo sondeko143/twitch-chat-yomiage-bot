@@ -1,6 +1,14 @@
 use axum::http::{HeaderMap, HeaderValue};
 use const_format::formatcp;
+use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
+
+lazy_static! {
+    /// プロセス全体で使い回す HTTP クライアント。呼び出しごとに新規生成すると
+    /// DNS+TLS ハンドシェイクを払い直すため、コネクションプール/keep-alive を
+    /// 共有して再利用する。
+    static ref HTTP_CLIENT: reqwest::Client = reqwest::Client::new();
+}
 
 const TWITCH_API_HOST: &str = "api.twitch.tv";
 const TWITCH_USERS_API_URL: &str = formatcp!("https://{}/helix/users", TWITCH_API_HOST);
@@ -38,7 +46,7 @@ pub async fn get_user(
     client_id: &str,
 ) -> Result<User, reqwest::Error> {
     let headers = auth_headers(access_token, client_id);
-    let res: User = reqwest::Client::new()
+    let res: User = HTTP_CLIENT
         .get(TWITCH_USERS_API_URL)
         .headers(headers)
         .query(&[("login", username)])
@@ -61,7 +69,7 @@ pub async fn get_tokens_by_refresh(
     client_id: &str,
     client_secret: &str,
 ) -> Result<(String, String), reqwest::Error> {
-    let res: RefreshToken = reqwest::Client::new()
+    let res: RefreshToken = HTTP_CLIENT
         .post(TWITCH_OAUTH2_TOKEN_URL)
         .timeout(std::time::Duration::from_secs(30))
         .form(&[
@@ -91,7 +99,7 @@ pub async fn get_tokens_by_code(
     client_id: &str,
     client_secret: &str,
 ) -> Result<(String, String), reqwest::Error> {
-    let res: AccessToken = reqwest::Client::new()
+    let res: AccessToken = HTTP_CLIENT
         .post(TWITCH_OAUTH2_TOKEN_URL)
         .form(&[
             ("code", code),
@@ -134,7 +142,7 @@ pub async fn ban_user(
             reason: "bot",
         },
     };
-    let res = reqwest::Client::new()
+    let res = HTTP_CLIENT
         .post(TWITCH_BANS_API_URL)
         .headers(headers)
         .query(&[
@@ -169,7 +177,7 @@ pub async fn get_chatters(
     client_id: &str,
 ) -> Result<Chatters, reqwest::Error> {
     let headers = auth_headers(access_token, client_id);
-    let res: Chatters = reqwest::Client::new()
+    let res: Chatters = HTTP_CLIENT
         .get(TWITCH_CHATTERS_API_URL)
         .headers(headers)
         .query(&[
@@ -218,7 +226,7 @@ pub async fn get_followed(
             ("after", after),
         ],
     };
-    let res: Followeds = reqwest::Client::new()
+    let res: Followeds = HTTP_CLIENT
         .get(TWITCH_FOLLOWED_API_URL)
         .headers(headers)
         .query(&queries)
@@ -272,7 +280,7 @@ pub async fn sub_event(
             session_id,
         },
     };
-    let res = reqwest::Client::new()
+    let res = HTTP_CLIENT
         .post(TWITCH_SUB_EVENT_API_URL)
         .headers(headers)
         .json(&sub)

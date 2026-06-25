@@ -6,6 +6,7 @@ use crate::{eventsub::sub_event_client_loop, irc::read_chat_client_loop};
 use anyhow::bail;
 use log::warn;
 use tokio::time::sleep;
+use tracing::Instrument;
 
 const IRC_CONNECT_ADDR: &str = "wss://irc-ws.chat.twitch.tv:443";
 const IRC_TIMEOUT_SECS: u64 = 180;
@@ -23,7 +24,11 @@ async fn refresh_tokens_with_backoff(
     let mut attempt = 0u32;
     let mut backoff = TOKEN_REFRESH_INITIAL_BACKOFF_SECS;
     loop {
-        match store.update_tokens(client_id, client_secret).await {
+        match store
+            .update_tokens(client_id, client_secret)
+            .instrument(tracing::info_span!("token_refresh"))
+            .await
+        {
             Ok(_) => return Ok(()),
             Err(e) => {
                 let is_permanent = matches!(
@@ -62,9 +67,13 @@ async fn refresh_tokens_with_backoff(
 pub async fn yomiage(settings: &Settings) -> anyhow::Result<()> {
     let irc_url = url::Url::parse(IRC_CONNECT_ADDR)?;
     let event_url = url::Url::parse(EVENT_CONNECT_ADDR)?;
-    let mut store = Store::new(&settings.db_dir, &settings.db_name)?;
+    let mut store = {
+        let _span = tracing::info_span!("store_new").entered();
+        Store::new(&settings.db_dir, &settings.db_name)?
+    };
     let user_id = store
         .user_id(&settings.username, &settings.client_id)
+        .instrument(tracing::info_span!("user_id_fetch"))
         .await?;
     loop {
         let access_token = store.access_token();
@@ -128,6 +137,12 @@ pub async fn yomiage(settings: &Settings) -> anyhow::Result<()> {
                     },
                     Err(e) => bail!(e)
                 }
+            },
+            _ = crate::profiling::wait_for_shutdown() => {
+                warn!("profiling: startup complete, shutting down");
+                chat_abort_handle.abort();
+                sub_event_abort_handle.abort();
+                return Ok(());
             },
         };
     }

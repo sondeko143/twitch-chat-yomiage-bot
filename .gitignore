@@ -1,5 +1,4 @@
 config.toml
-!.cargo/config.toml
 *.log
 .env
 db/**

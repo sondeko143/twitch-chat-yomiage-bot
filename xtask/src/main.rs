@@ -1,4 +1,5 @@
-//! 開発用タスクランナー。`cargo xtask <cmd>` で実行する。
+//! 開発用タスクランナー。入口は justfile に集約: `just analyze-trace [path]`
+//! （= `cargo run -p xtask -- analyze-trace [path]`）。
 //!
 //! コマンド:
 //!   analyze-trace [path]   just profile-startup が出す Chrome trace を解析する
@@ -168,8 +169,8 @@ fn analyze_trace(path: &str) -> Result<(), Box<dyn std::error::Error>> {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).map(String::as_str) != Some("analyze-trace") {
-        eprintln!("usage: cargo xtask analyze-trace [path]");
-        eprintln!("  (既定 path: {DEFAULT_TRACE})");
+        eprintln!("usage: just analyze-trace [path]");
+        eprintln!("  (or: cargo run -p xtask -- analyze-trace [path]; 既定 path: {DEFAULT_TRACE})");
         std::process::exit(2);
     }
     let path = args.get(2).map(String::as_str).unwrap_or(DEFAULT_TRACE);

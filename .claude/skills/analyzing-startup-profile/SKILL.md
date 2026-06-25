@@ -27,8 +27,8 @@ Detect the path — the profiling run's console log is stdout and usually not pe
 
 Run the helper (don't eyeball folded numbers):
 ```
-cargo xtask analyze-trace          # defaults to target/profile/trace.json
-cargo xtask analyze-trace <path>   # explicit path
+just analyze-trace          # defaults to target/profile/trace.json
+just analyze-trace <path>   # explicit path
 ```
 It pairs `B`/`E` per tid, prints per-span window/active time, the timeline, and **no-span gaps** (the waits). Source: [xtask/src/main.rs](../../../xtask/src/main.rs).
 

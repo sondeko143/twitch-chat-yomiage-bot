@@ -78,10 +78,15 @@ mod imp {
             tracing_flame::FlameLayer::with_file("target/profile/tracing.folded")
                 .expect("open target/profile/tracing.folded");
 
-        tracing_subscriber::registry()
+        // `.init()` ではなく `set_global_default` を使う: 前者は tracing-log の
+        // LogTracer をグローバル log ロガーとして登録してしまい、後段の
+        // simple_logger.init() が SetLoggerError になる。span は chrome/flame
+        // レイヤへ、log レコードは simple_logger へ、と棲み分ける。
+        let subscriber = tracing_subscriber::registry()
             .with(chrome_layer)
-            .with(flame_layer)
-            .init();
+            .with(flame_layer);
+        tracing::subscriber::set_global_default(subscriber)
+            .expect("set global default tracing subscriber");
 
         ProfileGuard {
             _chrome: chrome_guard,

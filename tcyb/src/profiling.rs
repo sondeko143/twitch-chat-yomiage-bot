@@ -143,4 +143,6 @@ mod imp {
     }
 }
 
-pub use imp::{init, mark_ready, wait_for_shutdown, ProfileGuard};
+pub use imp::{init, mark_ready, wait_for_shutdown};
+// ProfileGuard は名前でエクスポートしない: 呼び出し元は `let _g = profiling::init()` で
+// 型推論するため名前が不要。pub use すると非 profiling ビルドで「unused import」になる。

@@ -50,8 +50,8 @@ async fn main() -> Result<()> {
                 .with_list_parse_key("operations"),
         );
         if let Some(path) = args.config.as_ref() {
-            config_builder = config_builder
-                .add_source(config::File::with_name(path.to_str().unwrap()));
+            config_builder =
+                config_builder.add_source(config::File::with_name(path.to_str().unwrap()));
         }
         let config = config_builder.build()?;
         config.try_deserialize()?

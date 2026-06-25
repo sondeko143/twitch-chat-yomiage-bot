@@ -26,6 +26,21 @@ clippy:
 test:
     cargo test --workspace
 
+# profiling 経路のテスト（既定 test は feature 無効のため別途）
+test-profiling:
+    cargo test -p tcyb --features profiling
+
+# profiling 経路の clippy（既定 clippy は feature 無効のため別途）
+clippy-profiling:
+    cargo clippy -p tcyb --features profiling --all-targets -- -D warnings
+
+# 起動レイテンシ計測: profiling ビルドで read-chat を実行し、両接続確立で自動終了。
+# 出力: target/profile/trace.json (→ ui.perfetto.dev) と target/profile/flame.svg。
+# 事前に: cargo install inferno / 有効な認証(.env, `tcyb auth-code` 済み)。
+profile-startup:
+    cargo run -p tcyb --release --features profiling -- read-chat
+    inferno-flamegraph target/profile/tracing.folded > target/profile/flame.svg
+
 # 依存監査: 脆弱性・ライセンス・重複・取得元 (cargo-deny / deny.toml)
 deny:
     cargo deny check
@@ -35,7 +50,7 @@ audit:
     cargo audit
 
 # 一括チェック（整形検査 + clippy + テスト）— 開発時用
-check: fmt-check clippy test
+check: fmt-check clippy clippy-profiling test test-profiling
 
 # フルゲート（check + 依存監査）— コミット前 / CI 用
-ci: fmt-check clippy test deny audit
+ci: fmt-check clippy clippy-profiling test test-profiling deny audit

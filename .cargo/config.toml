@@ -1,0 +1,3 @@
+[alias]
+# 開発用タスクランナー。`cargo xtask <cmd>` で xtask クレートを実行する。
+xtask = "run --package xtask --"

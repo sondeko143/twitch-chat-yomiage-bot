@@ -41,6 +41,10 @@ profile-startup:
     cargo run -p tcyb --release --features profiling -- read-chat
     inferno-flamegraph target/profile/tracing.folded > target/profile/flame.svg
 
+# profile-startup が出した Chrome trace を解析（span 別実時間・タイムライン・no-span gap）
+analyze-trace path="target/profile/trace.json":
+    cargo run -p xtask -- analyze-trace {{path}}
+
 # 依存監査: 脆弱性・ライセンス・重複・取得元 (cargo-deny / deny.toml)
 deny:
     cargo deny check

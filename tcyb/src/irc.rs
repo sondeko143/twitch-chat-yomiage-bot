@@ -7,6 +7,7 @@ use tokio::process::Command;
 use tokio_tungstenite::{
     connect_async, tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream,
 };
+use tracing::Instrument;
 use url::Url;
 
 const TRANSLATE_TIMEOUT_SECS: u64 = 10;
@@ -35,6 +36,7 @@ pub async fn read_chat_client_loop(
     translate_command: String,
 ) -> Result<(), ChatError> {
     let mut ws_stream = connect_and_authorize(&url, &access_token, &username, &channel).await?;
+    crate::profiling::mark_ready(crate::profiling::Component::Irc);
     let idle_timeout = std::time::Duration::from_secs(timeout_sec);
     let mut ping_interval =
         tokio::time::interval(std::time::Duration::from_secs(PING_INTERVAL_SECS));
@@ -117,20 +119,27 @@ async fn connect_and_authorize(
     WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
     tokio_tungstenite::tungstenite::Error,
 > {
-    let (mut ws_stream, _) = connect_async(url).await?;
+    let (mut ws_stream, _) = connect_async(url)
+        .instrument(tracing::info_span!("irc_connect"))
+        .await?;
     info!("authorizing...");
-    ws_stream
-        .send(Message::Text(format!("PASS oauth:{}", access_token)))
-        .await?;
-    ws_stream
-        .send(Message::Text(format!("NICK {}", username)))
-        .await?;
-    ws_stream
-        .send(Message::Text(format!("JOIN #{}", channel)))
-        .await?;
-    ws_stream
-        .send(Message::Text(String::from("CAP REQ :twitch.tv/tags")))
-        .await?;
+    async {
+        ws_stream
+            .send(Message::Text(format!("PASS oauth:{}", access_token)))
+            .await?;
+        ws_stream
+            .send(Message::Text(format!("NICK {}", username)))
+            .await?;
+        ws_stream
+            .send(Message::Text(format!("JOIN #{}", channel)))
+            .await?;
+        ws_stream
+            .send(Message::Text(String::from("CAP REQ :twitch.tv/tags")))
+            .await?;
+        Ok::<(), tokio_tungstenite::tungstenite::Error>(())
+    }
+    .instrument(tracing::info_span!("irc_auth"))
+    .await?;
     Ok(ws_stream)
 }
 

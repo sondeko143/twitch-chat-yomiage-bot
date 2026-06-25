@@ -6,6 +6,7 @@ use thiserror::Error;
 use tokio_tungstenite::{
     connect_async, tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream,
 };
+use tracing::Instrument;
 use url::Url;
 
 #[derive(Error, Debug)]
@@ -30,7 +31,9 @@ pub async fn sub_event_client_loop(
     timeout_sec: u64,
 ) -> Result<(), EventSubError> {
     info!("connect event sub");
-    let (mut ws_stream, _) = connect_async(url).await?;
+    let (mut ws_stream, _) = connect_async(url)
+        .instrument(tracing::info_span!("event_connect"))
+        .await?;
     while let Ok(Some(msg)) = tokio::time::timeout(
         std::time::Duration::from_secs(timeout_sec),
         ws_stream.next(),
@@ -146,7 +149,10 @@ async fn process_message(
                     None => String::from(""),
                 };
                 info!("session welcome {}", session_id);
-                sub_event(user_id, session_id.as_str(), access_token, client_id).await?;
+                sub_event(user_id, session_id.as_str(), access_token, client_id)
+                    .instrument(tracing::info_span!("event_subscribe"))
+                    .await?;
+                crate::profiling::mark_ready(crate::profiling::Component::Event);
                 Ok(())
             }
             "session_reconnect" => {

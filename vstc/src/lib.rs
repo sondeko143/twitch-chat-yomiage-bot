@@ -96,6 +96,52 @@ pub async fn process_command(
     Ok(result.into_inner())
 }
 
+/// Build a text-only `Operand` with a fresh trace id and current origin timestamp.
+fn build_operand(text: String) -> Operand {
+    Operand {
+        text,
+        sound: None,
+        file_path: String::new(),
+        filters: Vec::new(),
+        trace_id: Uuid::new_v4().to_string(),
+        origin_ts: unix_timestamp_secs(),
+    }
+}
+
+/// Wrap the given routes into a single-chain `Command` carrying a text-only operand.
+fn build_command(routes: Vec<OperationRoute>, text: String) -> Command {
+    Command {
+        chains: vec![OperationChain { operations: routes }],
+        operand: Some(build_operand(text)),
+    }
+}
+
+/// Send pre-built operation routes with a text operand to the channel.
+///
+/// Unlike [`process_command`], this takes already-structured [`OperationRoute`]
+/// values instead of URL-style operation strings, so callers (e.g. a GUI) that
+/// already have separated destination/command/parameter fields don't round-trip
+/// through string parsing.
+///
+/// ## Errors
+///
+/// This function fails under the following circumstances:
+///
+/// * Any error occurring during connecting or sending to the target uri.
+pub async fn process_routes(
+    uri: &str,
+    routes: Vec<OperationRoute>,
+    text: String,
+) -> Result<Response, VstcError> {
+    let endpoint = tonic::transport::Endpoint::new(uri.to_string())?
+        .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
+        .timeout(Duration::from_secs(RPC_TIMEOUT_SECS));
+    let mut channel = CommanderClient::connect(endpoint).await?;
+    let c = tonic::Request::new(build_command(routes, text));
+    let result = channel.process_command(c).await?;
+    Ok(result.into_inner())
+}
+
 /// Current wall-clock time as fractional seconds since the Unix epoch.
 ///
 /// Used as the telemetry origin timestamp. Returns `0.0` if the system clock is
@@ -144,6 +190,23 @@ fn convert_to_operation(op_str: &str) -> Result<OperationRoute, VstcError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn build_command_wraps_routes_in_single_chain() {
+        let routes = vec![OperationRoute {
+            operation: Operation::Tts as i32,
+            remote: String::new(),
+            queries: HashMap::new(),
+        }];
+        let cmd = build_command(routes.clone(), "hello".to_string());
+        assert_eq!(cmd.chains.len(), 1);
+        assert_eq!(cmd.chains[0].operations, routes);
+        let operand = cmd.operand.expect("operand present");
+        assert_eq!(operand.text, "hello");
+        assert!(operand.sound.is_none());
+        assert!(!operand.trace_id.is_empty());
+    }
+
     #[test]
     fn convert_without_host() {
         let result = convert_to_operation("o:/transl?t=en&s=ja").unwrap();

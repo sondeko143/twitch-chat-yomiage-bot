@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["tcyb", "vstc", "vstc_cli", "igdb", "xtask"]
+members = ["tcyb", "vstc", "vstc_cli", "igdb", "xtask", "vstc_gui"]
 
 # 複雑度系 lint をワークスペース全体で有効化する。
 # cognitive_complexity(nursery) / too_many_lines(pedantic) は allow-by-default のため

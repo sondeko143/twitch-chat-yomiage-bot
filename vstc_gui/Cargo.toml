@@ -1,0 +1,19 @@
+[package]
+name = "vstc_gui"
+version = "0.1.0"
+edition = "2021"
+description = "vstreamer client GUI"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+eframe = { version = "0.33", default-features = false, features = ["glow", "persistence"] }
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1.28", features = ["rt-multi-thread"] }
+vstc = { path = "../vstc" }
+vstreamer_protos = { git = "https://github.com/sondeko143/vstreamer-protos", tag = "v0.1.2" }
+
+[dev-dependencies]
+serde_json = "1.0"

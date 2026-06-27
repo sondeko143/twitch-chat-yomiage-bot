@@ -150,14 +150,24 @@ impl GuiApp {
 }
 
 impl eframe::App for GuiApp {
+    fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
+        // Paint the whole window with the panel fill. eframe 0.35's `ui()` area
+        // isn't full-window-filled, so without this the space below the content
+        // (visible when the window is enlarged) shows the default clear color
+        // (pitch black).
+        visuals.panel_fill.to_normalized_gamma_f32()
+    }
+
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, eframe::APP_KEY, &self.state);
     }
 
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        suppress_ime_commit_newline(ctx);
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.poll_result();
-        egui::CentralPanel::default().show(ctx, |ui| {
+        // eframe 0.35's `ui()` hands us a margin-less central area, so reapply the
+        // standard central-panel frame to keep the usual content inset (the 0.33
+        // path used `CentralPanel`, which provided this margin).
+        egui::Frame::central_panel(ui.style()).show(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.heading("vstreamer クライアント");
                 self.ui_endpoint(ui);
@@ -253,88 +263,4 @@ fn step_card(ui: &mut egui::Ui, idx: usize, step: &mut PipelineStep) -> bool {
         step_params(ui, idx, step);
     });
     delete
-}
-
-/// Drop Enter key-presses from a frame that also carries an IME preedit/commit.
-///
-/// On Windows, committing a Japanese conversion with Enter can additionally emit
-/// a `Key::Enter`, which a multiline `TextEdit` would insert as a stray newline.
-/// While the user is composing (`Preedit`) or committing (`Commit`), Enter means
-/// "confirm conversion", never "newline", so we remove it.
-fn strip_enter_during_ime(events: &mut Vec<egui::Event>) {
-    let ime_active = events.iter().any(|e| {
-        matches!(
-            e,
-            egui::Event::Ime(egui::ImeEvent::Preedit(_))
-                | egui::Event::Ime(egui::ImeEvent::Commit(_))
-        )
-    });
-    if ime_active {
-        events.retain(|e| {
-            !matches!(
-                e,
-                egui::Event::Key {
-                    key: egui::Key::Enter,
-                    pressed: true,
-                    ..
-                }
-            )
-        });
-    }
-}
-
-/// Apply [`strip_enter_during_ime`] to this frame's input before widgets read it.
-fn suppress_ime_commit_newline(ctx: &egui::Context) {
-    ctx.input_mut(|i| strip_enter_during_ime(&mut i.events));
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use egui::{Event, ImeEvent, Key, Modifiers};
-
-    fn enter() -> Event {
-        Event::Key {
-            key: Key::Enter,
-            physical_key: None,
-            pressed: true,
-            repeat: false,
-            modifiers: Modifiers::default(),
-        }
-    }
-
-    fn is_enter(e: &Event) -> bool {
-        matches!(
-            e,
-            Event::Key {
-                key: Key::Enter,
-                ..
-            }
-        )
-    }
-
-    #[test]
-    fn strips_enter_during_ime_commit() {
-        let mut events = vec![Event::Ime(ImeEvent::Commit("あ".to_owned())), enter()];
-        strip_enter_during_ime(&mut events);
-        assert!(!events.iter().any(is_enter));
-        assert_eq!(events.len(), 1, "the IME commit event must be preserved");
-    }
-
-    #[test]
-    fn strips_enter_during_ime_preedit() {
-        let mut events = vec![Event::Ime(ImeEvent::Preedit("か".to_owned())), enter()];
-        strip_enter_during_ime(&mut events);
-        assert!(!events.iter().any(is_enter));
-    }
-
-    #[test]
-    fn keeps_enter_without_ime() {
-        let mut events = vec![enter()];
-        strip_enter_during_ime(&mut events);
-        assert!(
-            events.iter().any(is_enter),
-            "a plain Enter (no IME) must still insert a newline"
-        );
-    }
 }

@@ -9,7 +9,7 @@ publish = false
 workspace = true
 
 [dependencies]
-eframe = { version = "0.33", default-features = false, features = ["glow", "persistence"] }
+eframe = { version = "0.35", default-features = false, features = ["glow", "persistence"] }
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1.28", features = ["rt-multi-thread"] }
 vstc = { path = "../vstc" }

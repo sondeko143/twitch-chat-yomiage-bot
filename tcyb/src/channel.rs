@@ -91,12 +91,6 @@ async fn get_bots_list() -> Result<Vec<String>, reqwest::Error> {
     Ok(black_bot_names)
 }
 
-#[derive(Serialize, Deserialize)]
-struct FollowedCategories {
-    broadcaster_name: String,
-    category: String,
-}
-
 async fn follows(
     user_id: &str,
     after: &str,

@@ -12,6 +12,12 @@
 
 [advisories]
 # 無視する脆弱性 ID を指定する (対応待ち・誤検知など)。
+# ※ audit.toml と deny.toml の ignore は別リスト。両方に書かないと片方のゲートが赤のまま残る。
 ignore = [
-    # "RUSTSEC-0000-0000",
+    # quick-xml 0.39.4 の DoS 2件。wayland-scanner 0.31.10 (最新) が quick-xml ^0.39 を要求し
+    # 上流未対応のため 0.41 へ更新不可。build-time・Linux/Wayland 専用で Windows 非コンパイル、
+    # 信頼済みローカル XML のみ解析で到達不能。理由・引き込み経路の詳細は deny.toml を参照。
+    # 解除トリガ: wayland-scanner が quick-xml >=0.41 採用後に ID を削除して再 audit。
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
 ]

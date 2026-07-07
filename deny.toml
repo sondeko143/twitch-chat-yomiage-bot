@@ -14,8 +14,14 @@ unmaintained = "workspace"
 # 脆弱性 (vulnerability)・unsound は既定でエラー。
 # 誤検知や対応保留中のものは ID を追記して個別に無視する。
 ignore = [
-    # "RUSTSEC-0000-0000",
-    # { id = "RUSTSEC-0000-0000", reason = "対応待ち。次版で解消予定" },
+    # quick-xml 0.39.4 の DoS 2件。引き込み経路
+    # (vstc_gui→eframe 0.35→egui-winit→smithay-clipboard→smithay-client-toolkit 0.20→wayland-scanner 0.31.10)
+    # 上のクレートは全て最新だが、最新の wayland-scanner が依然 quick-xml ^0.39 を要求するため 0.41 へ更新不可
+    # (上流未対応)。build-time proc-macro・Linux/Wayland 専用で Windows 標的では非コンパイル、
+    # 信頼済みローカル XML のみ解析するため到達不能。
+    # 解除トリガ: wayland-scanner が quick-xml >=0.41 を採用したら ID を削除して再 audit。
+    { id = "RUSTSEC-2026-0194", reason = "quick-xml 属性重複チェックの O(N^2) DoS。wayland-scanner 経由・上流未対応で更新不可、到達不能。上流更新後に解除。" },
+    { id = "RUSTSEC-2026-0195", reason = "quick-xml namespace 宣言の無制限確保による memory DoS。同上 (wayland-scanner 経由)。上流更新後に解除。" },
 ]
 
 # ---------------------------------------------------------------------------

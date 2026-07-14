@@ -1,3 +1,4 @@
+use anyhow::Context;
 use serde::Deserialize;
 use std::{fmt::Debug, path::Path, path::PathBuf};
 
@@ -37,6 +38,31 @@ pub fn scaffold_config(config_file: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub fn load(
+    config_file: &Path,
+    cli_config: Option<&Path>,
+    default_db_dir: &Path,
+) -> anyhow::Result<Settings> {
+    let mut builder = config::Config::builder()
+        .set_default("listen_address", "localhost:8000")?
+        .set_default("greeting_template", "user_name is now following!")?
+        .set_default("db_dir", default_db_dir.to_string_lossy().into_owned())?
+        .set_default("db_name", "data.json")?;
+    builder = builder.add_source(config::File::from(config_file).required(false));
+    builder = builder.add_source(
+        config::Environment::with_prefix("cb")
+            .try_parsing(true)
+            .list_separator(",")
+            .with_list_parse_key("operations"),
+    );
+    if let Some(path) = cli_config {
+        let name = path.to_str().context("--config path is not valid UTF-8")?;
+        builder = builder.add_source(config::File::with_name(name));
+    }
+    let cfg = builder.build()?;
+    Ok(cfg.try_deserialize()?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -55,5 +81,54 @@ mod tests {
         // 生成物は妥当な TOML である
         let parsed: toml::Value = toml::from_str(&text).unwrap();
         assert!(parsed.get("client_secret").is_some());
+    }
+
+    fn write_config(dir: &std::path::Path, body: &str) -> std::path::PathBuf {
+        let path = dir.join("config.toml");
+        std::fs::write(&path, body).unwrap();
+        path
+    }
+
+    const FULL_CONFIG: &str = r#"
+client_id = "id"
+client_secret = "secret"
+channel = "ch"
+username = "user"
+speech_address = "http://localhost:8080"
+operations = ["o:/transl?t=ja"]
+translate_command = "translate"
+"#;
+
+    #[test]
+    fn load_applies_default_db_dir_when_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = write_config(dir.path(), FULL_CONFIG);
+        let default_db = std::path::Path::new("/var/tcyb-data");
+
+        let s = load(&cfg, None, default_db).unwrap();
+
+        assert_eq!(s.db_dir, default_db);
+        assert_eq!(s.client_secret, "secret");
+    }
+
+    #[test]
+    fn load_config_file_overrides_default_db_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = format!("{}\ndb_dir = \"custom-db\"\n", FULL_CONFIG);
+        let cfg = write_config(dir.path(), &body);
+
+        let s = load(&cfg, None, std::path::Path::new("/var/tcyb-data")).unwrap();
+
+        assert_eq!(s.db_dir, std::path::Path::new("custom-db"));
+    }
+
+    #[test]
+    fn load_errors_when_required_secret_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = write_config(dir.path(), "client_id = \"id\"\n");
+
+        let err = load(&cfg, None, std::path::Path::new("/var/tcyb-data"));
+
+        assert!(err.is_err());
     }
 }

@@ -28,7 +28,22 @@ pub struct Store {
 impl Store {
     pub fn new(db_dir: &Path, db_name: &str) -> Result<Self, std::io::Error> {
         let db = jfs::Store::new(db_dir)?;
-        let obj = db.get::<DBStore>(db_name)?;
+        let obj = db.get::<DBStore>(db_name).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                let expected = db_dir.join(db_name).with_extension("json");
+                std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!(
+                        "トークンストアが見つかりません ({})。`tcyb auth-code` で認証するか、\
+                         既存の db/{} をこの場所へコピーしてください。",
+                        expected.display(),
+                        db_name
+                    ),
+                )
+            } else {
+                e
+            }
+        })?;
         Ok(Self {
             db,
             db_name: String::from(db_name),
@@ -74,5 +89,31 @@ impl Store {
             self.obj = self.db.get::<DBStore>(&self.db_name)?;
         }
         Ok(self.obj.user_id.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_missing_token_store_gives_actionable_error() {
+        let dir = tempfile::tempdir().unwrap();
+        // No record file exists in the fresh dir, so the token store is absent.
+        let err = match Store::new(dir.path(), "data.json") {
+            Ok(_) => panic!("expected an error for a missing token store"),
+            Err(e) => e,
+        };
+
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+        let msg = err.to_string();
+        assert!(
+            msg.contains("auth-code"),
+            "error should guide the user to `auth-code`: {msg}"
+        );
+        assert!(
+            msg.contains("data.json"),
+            "error should name the missing store: {msg}"
+        );
     }
 }

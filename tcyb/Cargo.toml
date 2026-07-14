@@ -42,3 +42,7 @@ directories = "6.0.0"
 
 [features]
 profiling = ["dep:tracing-subscriber", "dep:tracing-chrome", "dep:tracing-flame"]
+
+[dev-dependencies]
+tempfile = "3.27.0"
+toml = "1.1.2"

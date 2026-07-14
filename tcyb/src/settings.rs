@@ -31,10 +31,16 @@ translate_command = "translate"
 "#;
 
 pub fn scaffold_config(config_file: &Path) -> anyhow::Result<()> {
+    use std::io::Write;
+
     if let Some(parent) = config_file.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(config_file, CONFIG_TEMPLATE)?;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(config_file)?;
+    file.write_all(CONFIG_TEMPLATE.as_bytes())?;
     Ok(())
 }
 
@@ -81,6 +87,36 @@ mod tests {
         // 生成物は妥当な TOML である
         let parsed: toml::Value = toml::from_str(&text).unwrap();
         assert!(parsed.get("client_secret").is_some());
+    }
+
+    #[test]
+    fn scaffold_template_round_trips_through_runtime_loader() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+
+        scaffold_config(&path).unwrap();
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        let filled = text
+            .replace("client_id = \"\"", "client_id = \"testid\"")
+            .replace("client_secret = \"\"", "client_secret = \"testsecret\"");
+        std::fs::write(&path, filled).unwrap();
+
+        let default_db = std::path::Path::new("/var/tcyb-data");
+        let s = load(&path, None, default_db).unwrap();
+
+        assert_eq!(s.client_id, "testid");
+        assert_eq!(s.client_secret, "testsecret");
+        assert_eq!(s.channel, "your_channel_name");
+        assert_eq!(
+            s.operations,
+            vec![
+                "o:/transl?t=ja".to_string(),
+                "o:/tts?i=1&spd=1.1&pit=-0.05".to_string(),
+                "o:/play?v=18".to_string(),
+            ]
+        );
+        assert_eq!(s.db_dir, default_db);
     }
 
     fn write_config(dir: &std::path::Path, body: &str) -> std::path::PathBuf {

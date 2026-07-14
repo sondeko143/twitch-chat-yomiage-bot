@@ -4,5 +4,4 @@ config.toml
 db/**
 target/**
 .env.*
-!.env.example
 thumbnails.jpg

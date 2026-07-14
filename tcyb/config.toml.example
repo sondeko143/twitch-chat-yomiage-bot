@@ -1,0 +1,13 @@
+# tcyb 設定ファイルのサンプル。
+# 実ファイルは OS 標準ユーザーディレクトリ（Windows は %APPDATA%\tcyb\config\config.toml）に
+# 初回起動時へ自動生成される。TCYB_CONFIG_DIR を設定するとその配下に変更できる。
+client_id = ""
+client_secret = ""
+channel = "your_channel_name"
+username = "your_username"
+speech_address = "http://localhost:8080"
+operations = ["o:/transl?t=ja", "o:/tts?i=1&spd=1.1&pit=-0.05", "o:/play?v=18"]
+greeting_template = "user_name さん。フォローありがとうございます。"
+translate_command = "translate"
+# listen_address = "localhost:8000"
+# db_dir / db_name は OS 標準データディレクトリを既定使用

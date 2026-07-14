@@ -36,26 +36,25 @@ enum Commands {
 #[tokio::main]
 async fn main() -> Result<()> {
     let _profile = profiling::init();
-    dotenvy::dotenv().ok();
     let args = Cli::parse();
+    let app_paths = paths::app_paths()?;
 
     let settings: Settings = {
         let _span = tracing::info_span!("config_build").entered();
-        let mut config_builder = config::Config::builder()
-            .set_default("listen_address", "localhost:8000")?
-            .set_default("greeting_template", "user_name is now following!")?;
-        config_builder = config_builder.add_source(
-            config::Environment::with_prefix("cb")
-                .try_parsing(true)
-                .list_separator(",")
-                .with_list_parse_key("operations"),
-        );
-        if let Some(path) = args.config.as_ref() {
-            config_builder =
-                config_builder.add_source(config::File::with_name(path.to_str().unwrap()));
+        if !app_paths.config_file.exists() && args.config.is_none() {
+            settings::scaffold_config(&app_paths.config_file)?;
+            println!(
+                "設定ファイルを作成しました: {}",
+                app_paths.config_file.display()
+            );
+            println!("client_id / client_secret などを記入してから再実行してください。");
+            return Ok(());
         }
-        let config = config_builder.build()?;
-        config.try_deserialize()?
+        settings::load(
+            &app_paths.config_file,
+            args.config.as_deref(),
+            &app_paths.db_dir,
+        )?
     };
 
     {

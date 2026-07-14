@@ -13,11 +13,35 @@ pub enum StoreError {
     IOError(#[from] std::io::Error),
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Default)]
 pub struct DBStore {
     pub access_token: String,
     pub refresh_token: String,
     pub user_id: String,
+}
+
+/// Persist freshly obtained tokens, creating the store on first use
+/// (first-time `auth-code`, or after the store location moved). An existing
+/// record's `user_id` is preserved so a re-auth doesn't drop it.
+pub fn save_tokens(
+    db_dir: &Path,
+    db_name: &str,
+    access_token: String,
+    refresh_token: String,
+) -> Result<(), std::io::Error> {
+    let db = jfs::Store::new(db_dir)?;
+    let obj = match db.get::<DBStore>(db_name) {
+        Ok(o) => o,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => DBStore::default(),
+        Err(e) => return Err(e),
+    };
+    let updated = DBStore {
+        access_token,
+        refresh_token,
+        ..obj
+    };
+    db.save_with_id(&updated, db_name)?;
+    Ok(())
 }
 
 pub struct Store {
@@ -115,5 +139,46 @@ mod tests {
             msg.contains("data.json"),
             "error should name the missing store: {msg}"
         );
+    }
+
+    #[test]
+    fn save_tokens_bootstraps_store_when_absent() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Fresh dir, no record yet: this must create the store, not error.
+        save_tokens(dir.path(), "data.json", "acc".into(), "ref".into()).unwrap();
+
+        let saved = jfs::Store::new(dir.path())
+            .unwrap()
+            .get::<DBStore>("data.json")
+            .unwrap();
+        assert_eq!(saved.access_token, "acc");
+        assert_eq!(saved.refresh_token, "ref");
+        assert_eq!(saved.user_id, ""); // no user id yet on a fresh bootstrap
+    }
+
+    #[test]
+    fn save_tokens_preserves_existing_user_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let seed = jfs::Store::new(dir.path()).unwrap();
+        seed.save_with_id(
+            &DBStore {
+                access_token: "old".into(),
+                refresh_token: "oldr".into(),
+                user_id: "U123".into(),
+            },
+            "data.json",
+        )
+        .unwrap();
+
+        save_tokens(dir.path(), "data.json", "new".into(), "newr".into()).unwrap();
+
+        let saved = jfs::Store::new(dir.path())
+            .unwrap()
+            .get::<DBStore>("data.json")
+            .unwrap();
+        assert_eq!(saved.access_token, "new");
+        assert_eq!(saved.refresh_token, "newr");
+        assert_eq!(saved.user_id, "U123"); // preserved across re-auth
     }
 }

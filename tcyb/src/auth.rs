@@ -141,13 +141,6 @@ async fn obtain_access_token(
 ) -> anyhow::Result<()> {
     let (access_token, refresh_token) =
         get_tokens_by_code(redirect_uri, code, client_id, client_secret).await?;
-    let db = Store::new(db_dir)?;
-    let obj = db.get::<DBStore>(db_name)?;
-    let updated_obj = DBStore {
-        access_token,
-        refresh_token,
-        ..obj
-    };
-    db.save_with_id(&updated_obj, db_name)?;
+    crate::store::save_tokens(&db_dir, db_name, access_token, refresh_token)?;
     Ok(())
 }

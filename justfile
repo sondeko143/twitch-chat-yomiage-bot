@@ -10,6 +10,13 @@ set windows-shell := ["cmd.exe", "/c"]
 default:
     @just --list
 
+# バイナリ crate を ~/.cargo/bin へインストール（既定は本体 tcyb）。
+# 対象を選択可: just install vstc_cli / just install igdb / just install vstc_gui
+#   （vstc は lib、xtask は開発用のためインストール対象外）。
+# --locked で Cargo.lock 固定、--force で再実行時に既存を上書き更新。
+install crate="tcyb":
+    cargo install --path {{crate}} --locked --force
+
 # フォーマット適用（コードを書き換える）
 fmt:
     cargo fmt --all

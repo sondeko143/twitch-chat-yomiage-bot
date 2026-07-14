@@ -2,6 +2,16 @@
 
 Twitch チャット読み上げ bot。Rust ワークスペース（`tcyb` = 本体 / `vstc` = client lib / `vstc_cli` / `igdb`）。
 
+## ドキュメント構成（spec / ADR / plan）
+
+1 つの変更は 3 種のドキュメントに分ける（3-doc モデル）:
+
+- **spec（薄・不変寄り）** — 問題 / ゴール / 非ゴール / 受入基準の 4 節のみ。実装で解決すると陳腐化しにくい記述に絞る。置き場: [docs/superpowers/specs/](docs/superpowers/specs/)。
+- **ADR（不変）** — 決定と却下根拠。同期し続けず、覆すときは新 ADR で supersede する。置き場: [docs/adr/](docs/adr/)（索引・起票手順は [docs/adr/README.md](docs/adr/README.md)）。
+- **plan（使い捨て）** — 手順 / 影響ファイル / テスト。実装後すぐ陳腐化する前提で参照・同期しない。置き場: [docs/superpowers/plans/](docs/superpowers/plans/)。
+
+spec 承認後・plan 起動の手前で「決定層あり（却下案・後戻りしにくい選択・境界/契約の変更・非自明なトレードオフ）」かを毎回判定し、該当すれば ADR を起こす。無ければ plan 冒頭に `ADR: none — 決定層なし` と残す。skill は `lean-spec` / `adr-writing`。
+
 ## 品質ゲート — PR 作成・main マージ前に必須
 
 **PR を作成する前、および main へマージする前に、必ず `just ci` を実行して全緑（exit code 0）を確認すること。** 赤のまま PR/マージしない。

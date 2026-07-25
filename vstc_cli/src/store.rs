@@ -53,13 +53,20 @@ pub fn load(path: &Path) -> Result<ProfileStore> {
 }
 
 /// Write the store atomically: serialize into a sibling temp file, then rename
-/// it over the target. An interrupted write therefore cannot truncate the file
-/// and lose every saved profile (ADR-0015).
+/// it over the target, so an interrupted write cannot leave the target file in
+/// a half-written state (ADR-0015). The temp file name embeds this process's
+/// PID so two processes calling `save` at the same time do not overwrite each
+/// other's temp file mid-write; `save` still assumes a single writer overall
+/// (it is called from the interactive `profile set` command, not run
+/// concurrently against the same path), so this is not full multi-writer
+/// safety.
 ///
 /// ## Errors
 ///
 /// Fails when the directory cannot be created, or the file cannot be written or
-/// renamed into place.
+/// renamed into place. When the rename fails, the leftover temp file is removed
+/// on a best-effort basis (a removal failure is ignored) before the original
+/// rename error is returned.
 pub fn save(path: &Path, store: &ProfileStore) -> Result<()> {
     let dir = path
         .parent()
@@ -67,11 +74,14 @@ pub fn save(path: &Path, store: &ProfileStore) -> Result<()> {
     std::fs::create_dir_all(dir)
         .with_context(|| format!("{} を作成できませんでした", dir.display()))?;
     let text = toml::to_string(store).context("プロファイルを TOML へ変換できませんでした")?;
-    let tmp = path.with_extension("toml.tmp");
+    let tmp = path.with_extension(format!("toml.{}.tmp", std::process::id()));
     std::fs::write(&tmp, text)
         .with_context(|| format!("{} へ書き込めませんでした", tmp.display()))?;
-    std::fs::rename(&tmp, path)
-        .with_context(|| format!("{} へ反映できませんでした", path.display()))
+    if let Err(e) = std::fs::rename(&tmp, path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e).with_context(|| format!("{} へ反映できませんでした", path.display()));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -166,6 +176,33 @@ mod tests {
         save(&path, &second).expect("second save");
         let got = load(&path).expect("load");
         assert_eq!(got, second, "rename must replace the existing file");
+    }
+
+    #[test]
+    fn save_cleans_up_temp_file_when_rename_fails() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("profiles.toml");
+        // A directory at the destination path makes the rename fail on every
+        // platform, without needing to simulate any OS-specific I/O error.
+        std::fs::create_dir(&path).expect("create directory at target path");
+
+        let err = save(&path, &ProfileStore::default()).expect_err("rename onto a directory fails");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("profiles.toml"),
+            "error should name the file: {msg}"
+        );
+
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+            .expect("read_dir")
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.ends_with(".tmp"))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "temp file left behind after failed rename: {leftovers:?}"
+        );
     }
 
     #[test]

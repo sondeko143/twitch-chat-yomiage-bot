@@ -5,3 +5,5 @@ db/**
 target/**
 .env.*
 thumbnails.jpg
+# subagent-driven-development の作業領域（進捗台帳・ブリーフ・レビュー用 diff）
+.superpowers/

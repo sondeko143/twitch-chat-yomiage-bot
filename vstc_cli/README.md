@@ -6,14 +6,21 @@
 
 ```sh
 cargo run -p vstc_cli -- --help
+vstreamer client cli
+
 Usage: vstc_cli.exe <COMMAND>
 
 Commands:
-  send     操作チェーンを送信する
+  send     操作チェーンを送信する ex: `send 'o:/transl?t=ja' 'o:/tts' -t "hello"`
   pause    再生を一時停止する
   resume   再生を再開する
   reload   設定ファイルをリロードする
   profile  プロファイルを管理する
+  help     Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
 ```
 
 `send` / `pause` / `resume` / `reload` は共通で `--profile <NAME>` / `-H, --host <HOST>` / `-p, --port <PORT>` を取る。
@@ -60,9 +67,9 @@ Commands:
 
 ### 保存場所
 
-プロファイルは OS 標準のユーザー設定ディレクトリ配下の `vstc/profiles.toml` 1 ファイルに保存される（Windows は Roaming AppData 配下）。正確なパスは `profile list` が末尾に表示する。
+プロファイルは OS 標準のユーザー設定ディレクトリ配下の `profiles.toml` 1 ファイルに保存される。Windows では既定で `%APPDATA%\vstc\config\profiles.toml`。正確なパスは `profile list` が末尾に表示する。
 
-環境変数 `VSTC_CONFIG_DIR` を設定すると、そのディレクトリ配下の `profiles.toml` が使われる。
+環境変数 `VSTC_CONFIG_DIR` を設定すると、そのディレクトリ配下（`<VSTC_CONFIG_DIR>\profiles.toml`）が使われる。
 
 ```toml
 [profiles.main]

@@ -5,9 +5,11 @@ mod store;
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 use profile::{Overrides, Profile, ProfileStore, Resolved};
+use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use vstreamer_protos::Sound;
+use vstc::RouteOperand;
+use vstreamer_protos::{Operation, OperationRoute, Sound};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -20,6 +22,12 @@ struct Cli {
 enum Commands {
     /// 操作チェーンを送信する ex: `send 'o:/transl?t=ja' 'o:/tts' -t "hello"`
     Send(SendArgs),
+    /// 再生を一時停止する
+    Pause(ConnArgs),
+    /// 再生を再開する
+    Resume(ConnArgs),
+    /// 設定ファイルをリロードする
+    Reload(ReloadArgs),
     /// プロファイルを管理する
     #[command(subcommand)]
     Profile(ProfileCmd),
@@ -74,6 +82,15 @@ struct SendArgs {
     /// フィルタ
     #[arg(long)]
     filters: Option<Vec<String>>,
+    #[command(flatten)]
+    conn: ConnArgs,
+}
+
+#[derive(Args)]
+struct ReloadArgs {
+    /// リロードする設定ファイルのパス（プロファイルの config_path より優先）
+    #[arg(long)]
+    config_path: Option<String>,
     #[command(flatten)]
     conn: ConnArgs,
 }
@@ -190,11 +207,62 @@ async fn run_send(args: SendArgs) -> Result<()> {
     Ok(())
 }
 
+/// 単一の操作だけを持つ route を組む。宛先は uri 側で決まるので remote は空。
+fn single_route(op: Operation) -> OperationRoute {
+    OperationRoute {
+        operation: op.into(),
+        remote: String::new(),
+        queries: HashMap::new(),
+    }
+}
+
+/// 1 ステップだけのチェーンを送る。
+async fn send_route(resolved: &Resolved, op: Operation, operand: RouteOperand) -> Result<()> {
+    let uri = resolved.uri();
+    vstc::process_routes_with_operand(&uri, vec![single_route(op)], operand)
+        .await
+        .with_context(|| format!("{uri} への送信に失敗しました"))?;
+    Ok(())
+}
+
+/// reload が使う設定パスを取り出す。どこからも解決できなければ、両方の
+/// 指定方法を示して送信前に止める。
+fn reload_config_path(resolved: &Resolved) -> Result<String> {
+    resolved.config_path.clone().context(
+        "reload には設定ファイルのパスが必要です\n\
+         --config-path <PATH> を指定するか、プロファイルに保存してください:\n\
+         vstc_cli profile set <NAME> --config-path <PATH>",
+    )
+}
+
+async fn run_reload(args: ReloadArgs) -> Result<()> {
+    let resolved = resolve_conn(&args.conn, args.config_path)?;
+    let file_path = reload_config_path(&resolved)?;
+    send_route(
+        &resolved,
+        Operation::Reload,
+        RouteOperand {
+            file_path,
+            ..RouteOperand::default()
+        },
+    )
+    .await
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Send(args) => run_send(args).await,
+        Commands::Pause(conn) => {
+            let resolved = resolve_conn(&conn, None)?;
+            send_route(&resolved, Operation::Pause, RouteOperand::default()).await
+        }
+        Commands::Resume(conn) => {
+            let resolved = resolve_conn(&conn, None)?;
+            send_route(&resolved, Operation::Resume, RouteOperand::default()).await
+        }
+        Commands::Reload(args) => run_reload(args).await,
         Commands::Profile(cmd) => run_profile(cmd),
     }
 }
@@ -343,6 +411,64 @@ mod tests {
         assert!(
             !out.contains("保存済みプロファイルはありません"),
             "non-empty store must not show the empty-store guidance: {out}"
+        );
+    }
+
+    #[test]
+    fn pause_and_resume_take_conn_flags() {
+        let cli = Cli::parse_from(["vstc_cli", "pause", "--profile", "main", "--port", "1"]);
+        let Commands::Pause(conn) = cli.command else {
+            panic!("expected pause");
+        };
+        assert_eq!(conn.profile.as_deref(), Some("main"));
+        assert_eq!(conn.port, Some(1));
+
+        let cli = Cli::parse_from(["vstc_cli", "resume", "-H", "h"]);
+        let Commands::Resume(conn) = cli.command else {
+            panic!("expected resume");
+        };
+        assert_eq!(conn.host.as_deref(), Some("h"));
+    }
+
+    #[test]
+    fn reload_takes_a_config_path_flag() {
+        let cli = Cli::parse_from(["vstc_cli", "reload", "--config-path", "c.yml"]);
+        let Commands::Reload(args) = cli.command else {
+            panic!("expected reload");
+        };
+        assert_eq!(args.config_path.as_deref(), Some("c.yml"));
+    }
+
+    #[test]
+    fn single_route_carries_the_operation_and_no_remote() {
+        let route = single_route(Operation::Pause);
+        assert_eq!(route.operation, Operation::Pause as i32);
+        assert!(route.remote.is_empty());
+        assert!(route.queries.is_empty());
+    }
+
+    #[test]
+    fn reload_config_path_falls_back_to_the_profile() {
+        let profile = Profile {
+            config_path: Some("from-profile.yml".to_string()),
+            ..Profile::default()
+        };
+        let resolved = profile::resolve(Some(&profile), &Overrides::default());
+        assert_eq!(
+            reload_config_path(&resolved).expect("profile supplies the path"),
+            "from-profile.yml"
+        );
+    }
+
+    #[test]
+    fn reload_without_any_config_path_errors_with_guidance() {
+        let resolved = profile::resolve(None, &Overrides::default());
+        let err = reload_config_path(&resolved).expect_err("no source supplies a path");
+        let msg = err.to_string();
+        assert!(msg.contains("--config-path"), "should name the flag: {msg}");
+        assert!(
+            msg.contains("profile set"),
+            "should point at the profile route too: {msg}"
         );
     }
 }

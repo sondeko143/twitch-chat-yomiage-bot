@@ -141,15 +141,19 @@ fn run_profile(cmd: ProfileCmd) -> Result<()> {
     }
 }
 
-/// 一覧を表示する。0 件は異常ではないので、作り方を案内して正常終了する。
-fn print_profile_list(saved: &ProfileStore) {
+/// 一覧の表示内容を組み立てる。0 件は異常ではないので、作り方を案内する。
+fn profile_list_output(saved: &ProfileStore) -> String {
     let table = profile::render_list(saved);
     if table.is_empty() {
-        println!("保存済みプロファイルはありません");
-        println!("作成: vstc_cli profile set <NAME> --host <HOST> --port <PORT>");
-        return;
+        return "保存済みプロファイルはありません\n作成: vstc_cli profile set <NAME> --host <HOST> --port <PORT>"
+            .to_string();
     }
-    println!("{table}");
+    table
+}
+
+/// 一覧を表示する。0 件は異常ではないので、作り方を案内して正常終了する。
+fn print_profile_list(saved: &ProfileStore) {
+    println!("{}", profile_list_output(saved));
 }
 
 /// `--wav` を読み込む。未指定なら既定の空 `Sound` を返す（従来挙動）。
@@ -304,5 +308,41 @@ mod tests {
         };
         let got = resolve_conn(&conn, None).expect("no profile means no file access");
         assert_eq!(got.uri(), "http://localhost:8080");
+    }
+
+    #[test]
+    fn profile_list_output_guides_when_store_is_empty() {
+        let out = profile_list_output(&ProfileStore::default());
+        assert!(
+            out.contains("保存済みプロファイルはありません"),
+            "should say there are no saved profiles: {out}"
+        );
+        assert!(
+            out.contains("profile set"),
+            "should suggest how to create one: {out}"
+        );
+    }
+
+    #[test]
+    fn profile_list_output_renders_the_table_when_store_is_non_empty() {
+        let mut saved = ProfileStore::default();
+        saved.merge(
+            "main",
+            &Profile {
+                host: Some("h".to_string()),
+                port: Some(1),
+                config_path: None,
+            },
+        );
+        let out = profile_list_output(&saved);
+        assert!(
+            out.contains("NAME"),
+            "should include the table header: {out}"
+        );
+        assert!(out.contains("main"), "should list the profile name: {out}");
+        assert!(
+            !out.contains("保存済みプロファイルはありません"),
+            "non-empty store must not show the empty-store guidance: {out}"
+        );
     }
 }

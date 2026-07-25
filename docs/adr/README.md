@@ -53,3 +53,7 @@ spec 承認後、plan の手前で毎回判定する。1 つでも該当した�
 | [0011](0011-disabled-step-as-forward-route.md) | 無効パイプラインステップは FORWARD route に置換する | Accepted | 2026-06-26 | [vstc_gui](../superpowers/specs/2026-06-26-vstc-gui-client-design.md) |
 | [0012](0012-persist-gui-state-via-eframe-storage.md) | GUI 状態は eframe 標準 Storage で OS ユーザー単位に永続化する | Accepted | 2026-06-26 | [vstc_gui](../superpowers/specs/2026-06-26-vstc-gui-client-design.md) |
 | [0013](0013-config-secret-in-os-standard-user-dir.md) | 秘密・設定・トークンを OS 標準ユーザーディレクトリに平文で置く | Accepted | 2026-07-14 | [config OS 標準化](../superpowers/specs/2026-07-14-config-os-standard-location-design.md) |
+| [0014](0014-subcommand-only-cli-surface-for-vstc-cli.md) | vstc_cli を全面サブコマンド化し従来の位置引数フォームを廃止する | Proposed | 2026-07-26 | [vstc_cli プロファイル](../superpowers/specs/2026-07-26-vstc-cli-profiles-design.md) |
+| [0015](0015-single-profiles-toml-in-os-user-config-dir.md) | 接続プロファイルを vstc_cli 専用の単一 profiles.toml に保存する | Proposed | 2026-07-26 | [vstc_cli プロファイル](../superpowers/specs/2026-07-26-vstc-cli-profiles-design.md) |
+| [0016](0016-explicit-flags-override-profile-and-set-merges.md) | 設定値は「明示フラグ > プロファイル > 既定」で解決し profile set はマージ更新にする | Proposed | 2026-07-26 | [vstc_cli プロファイル](../superpowers/specs/2026-07-26-vstc-cli-profiles-design.md) |
+| [0017](0017-extend-vstc-routes-entrypoint-with-operand-options.md) | file_path を運ぶため vstc に operand オプション付きの route 送信口を足す | Proposed | 2026-07-26 | [vstc_cli プロファイル](../superpowers/specs/2026-07-26-vstc-cli-profiles-design.md) |

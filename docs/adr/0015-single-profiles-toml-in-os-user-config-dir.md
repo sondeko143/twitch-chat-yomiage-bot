@@ -1,6 +1,6 @@
 # 0015. 接続プロファイルを vstc_cli 専用の単一 profiles.toml に保存する
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-07-26
 - Related: [vstc_cli プロファイル spec](../superpowers/specs/2026-07-26-vstc-cli-profiles-design.md), [ADR-0013](0013-config-secret-in-os-standard-user-dir.md), [ADR-0012](0012-persist-gui-state-via-eframe-storage.md)
 

@@ -1,3 +1,4 @@
+mod profile;
 mod sound;
 
 use anyhow::{Context, Result};

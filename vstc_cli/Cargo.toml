@@ -17,3 +17,9 @@ vstreamer_protos = { git = "https://github.com/sondeko143/vstreamer-protos", tag
 vstc = { path = "../vstc" }
 hound = "3.5"
 anyhow = "1.0.71"
+serde = { version = "1.0.162", features = ["derive"] }
+toml = "1.1.2"
+directories = "6.0.0"
+
+[dev-dependencies]
+tempfile = "3.27.0"

@@ -18,6 +18,7 @@ const UNSET: &str = "-";
 /// Every field is optional so `profile set` can update a single field without
 /// clearing the rest (ADR-0016), and so unset fields stay out of the file.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Profile {
     /// Destination host.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -34,6 +35,7 @@ pub struct Profile {
 ///
 /// `BTreeMap` keeps `profile list` output stable and name-sorted.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProfileStore {
     /// Saved profiles keyed by name.
     #[serde(default)]
@@ -401,5 +403,22 @@ mod tests {
     fn empty_toml_deserializes_to_empty_store() {
         let back: ProfileStore = toml::from_str("").expect("deserialize empty");
         assert!(back.profiles.is_empty());
+    }
+
+    #[test]
+    fn misspelled_field_in_a_hand_edited_file_fails_to_deserialize() {
+        // ADR-0015 advertises hand-editing profiles.toml as supported. Without
+        // `deny_unknown_fields`, a typo like `prot` (instead of `port`) would
+        // silently be dropped and the profile would load with `port: None`,
+        // sending to the default port instead of erroring. Assert on the
+        // error, not on a silently-defaulted value.
+        let text = "[profiles.main]\nhost = \"h\"\nprot = 19829\n";
+        let err = toml::from_str::<ProfileStore>(text)
+            .expect_err("unknown field `prot` must fail to deserialize");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("prot"),
+            "error should name the unrecognized field: {msg}"
+        );
     }
 }

@@ -235,17 +235,28 @@ fn reload_config_path(resolved: &Resolved) -> Result<String> {
     )
 }
 
+/// `op` から送信する operand を組み立てる。`Reload` のときだけ設定パスを
+/// 解決して `file_path` に載せ、それ以外（`Pause`/`Resume`）は空の operand を
+/// 返す。送信・I/O を行わない純粋な変換なので、この対応をテストで固定できる。
+///
+/// ## Errors
+///
+/// `Reload` でどこからも設定パスを解決できなかったとき。
+fn route_operand(op: Operation, resolved: &Resolved) -> Result<RouteOperand> {
+    if op == Operation::Reload {
+        Ok(RouteOperand {
+            file_path: reload_config_path(resolved)?,
+            ..RouteOperand::default()
+        })
+    } else {
+        Ok(RouteOperand::default())
+    }
+}
+
 /// 単一操作を送る。`Reload` のときだけ設定パスを解決して operand に載せる。
 async fn run_route(conn: &ConnArgs, op: Operation, config_path: Option<String>) -> Result<()> {
     let resolved = resolve_conn(conn, config_path)?;
-    let operand = if op == Operation::Reload {
-        RouteOperand {
-            file_path: reload_config_path(&resolved)?,
-            ..RouteOperand::default()
-        }
-    } else {
-        RouteOperand::default()
-    };
+    let operand = route_operand(op, &resolved)?;
     send_route(&resolved, op, operand).await
 }
 
@@ -397,9 +408,11 @@ mod tests {
     }
 
     #[test]
-    fn resolve_conn_without_profile_uses_defaults_and_skips_the_file() {
-        // --profile が無い実行は profiles.toml に触れないので、保存先が解決
-        // できない環境でも成功しなければならない。
+    fn resolve_conn_without_profile_uses_defaults() {
+        // このテストは「既定値になる」ことだけを検証する。「ファイルに触れ
+        // ない」性質自体は resolve_conn の早期 return（--profile が無ければ
+        // store::profiles_path/load を呼ぶ前に return する）で成り立ってお
+        // り、ここでは検証していない。
         let conn = ConnArgs {
             profile: None,
             host: None,
@@ -501,6 +514,37 @@ mod tests {
             msg.contains("profile set"),
             "should point at the profile route too: {msg}"
         );
+    }
+
+    #[test]
+    fn route_operand_for_reload_carries_the_resolved_config_path() {
+        let resolved = profile::resolve(
+            None,
+            &Overrides {
+                config_path: Some("c.yml".to_string()),
+                ..Overrides::default()
+            },
+        );
+        let operand = route_operand(Operation::Reload, &resolved).expect("config path is present");
+        assert_eq!(operand.file_path, "c.yml");
+    }
+
+    #[test]
+    fn route_operand_for_reload_without_a_config_path_errors() {
+        let resolved = profile::resolve(None, &Overrides::default());
+        assert!(route_operand(Operation::Reload, &resolved).is_err());
+    }
+
+    #[test]
+    fn route_operand_for_pause_and_resume_is_empty() {
+        let resolved = profile::resolve(None, &Overrides::default());
+        for op in [Operation::Pause, Operation::Resume] {
+            let operand = route_operand(op, &resolved).expect("pause/resume never error");
+            assert!(operand.file_path.is_empty(), "file_path for {op:?}");
+            assert!(operand.text.is_empty(), "text for {op:?}");
+            assert!(operand.filters.is_empty(), "filters for {op:?}");
+            assert!(operand.sound.is_none(), "sound for {op:?}");
+        }
     }
 
     fn planned_operation(argv: &[&str]) -> Operation {

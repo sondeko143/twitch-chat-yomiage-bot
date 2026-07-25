@@ -14,10 +14,16 @@ const FILE_NAME: &str = "profiles.toml";
 
 /// Pure path composition, split out so both branches are testable without
 /// touching the real user directories.
+///
+/// A set-but-empty `base_override` (as `std::env::var_os` yields for a
+/// variable set to `""`) is treated the same as an absent override: it falls
+/// through to `proj`, rather than resolving to a bare relative `profiles.toml`
+/// under whatever the current directory happens to be.
 fn profiles_path_from(
     base_override: Option<PathBuf>,
     proj: Option<ProjectDirs>,
 ) -> Result<PathBuf> {
+    let base_override = base_override.filter(|base| !base.as_os_str().is_empty());
     if let Some(base) = base_override {
         return Ok(base.join(FILE_NAME));
     }
@@ -100,6 +106,18 @@ mod tests {
     #[test]
     fn missing_project_dirs_without_override_errors() {
         assert!(profiles_path_from(None, None).is_err());
+    }
+
+    #[test]
+    fn empty_override_is_treated_as_absent() {
+        // `std::env::var_os` returns `Some("")` for a set-but-empty
+        // VSTC_CONFIG_DIR. If that were used as-is, this would resolve to a
+        // bare relative "profiles.toml" (writing into whatever the current
+        // directory happens to be) instead of erroring like the no-override,
+        // no-ProjectDirs case below. Same inputs, same outcome, proves the
+        // empty override does not sneak through as a usable path.
+        let empty = PathBuf::new();
+        assert!(profiles_path_from(Some(empty), None).is_err());
     }
 
     #[test]

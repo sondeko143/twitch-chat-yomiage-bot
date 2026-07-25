@@ -1,6 +1,6 @@
 # 0017. file_path を運ぶため vstc に operand オプション付きの route 送信口を足す
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-07-26
 - Related: [vstc_cli プロファイル spec](../superpowers/specs/2026-07-26-vstc-cli-profiles-design.md), [ADR-0009](0009-add-process-routes-entrypoint-to-vstc.md)
 

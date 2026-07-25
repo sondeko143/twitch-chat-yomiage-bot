@@ -144,3 +144,49 @@ async fn process_command_times_out_when_server_silent() {
         elapsed
     );
 }
+
+#[tokio::test]
+async fn process_routes_with_operand_carries_file_path() {
+    use std::collections::HashMap;
+    use std::sync::mpsc::channel;
+    use std::time::Duration;
+    use vstreamer_protos::{Operation, OperationRoute};
+
+    const ADDR_STR: &str = "127.0.0.1:9003";
+    let (tx, rx) = channel();
+    tokio::spawn(async move {
+        let mut mock = MockCommanderService::new();
+        mock.expect_process_command().returning(move |req| {
+            let inner = req.into_inner();
+            let operand = inner.operand.expect("operand should be present");
+            let op = inner.chains[0].operations[0].operation;
+            tx.send((op, operand.file_path))
+                .expect("test channel should accept the operand");
+            Ok(tonic::Response::new(Response { result: true }))
+        });
+        let addr = ADDR_STR.parse().unwrap();
+        build(mock).serve(addr).await.unwrap();
+    });
+
+    let routes = vec![OperationRoute {
+        operation: Operation::Reload as i32,
+        remote: String::new(),
+        queries: HashMap::new(),
+    }];
+    process_routes_with_operand(
+        format!("http://{ADDR_STR}").as_str(),
+        routes,
+        RouteOperand {
+            file_path: String::from("some/config.yml"),
+            ..RouteOperand::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    let (op, file_path) = rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("server should have received the operand");
+    assert_eq!(op, Operation::Reload as i32);
+    assert_eq!(file_path, "some/config.yml");
+}

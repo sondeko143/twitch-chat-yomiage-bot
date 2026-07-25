@@ -1,6 +1,6 @@
 # 0016. 設定値は「明示フラグ > プロファイル > 既定」で解決し、profile set はマージ更新にする
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-07-26
 - Related: [vstc_cli プロファイル spec](../superpowers/specs/2026-07-26-vstc-cli-profiles-design.md), [ADR-0015](0015-single-profiles-toml-in-os-user-config-dir.md)
 

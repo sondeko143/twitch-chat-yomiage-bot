@@ -1,6 +1,6 @@
 # 0014. vstc_cli を全面サブコマンド化し従来の位置引数フォームを廃止する
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-07-26
 - Related: [vstc_cli プロファイル spec](../superpowers/specs/2026-07-26-vstc-cli-profiles-design.md)
 

@@ -1,5 +1,6 @@
 mod profile;
 mod sound;
+mod store;
 
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};

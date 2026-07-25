@@ -235,35 +235,66 @@ fn reload_config_path(resolved: &Resolved) -> Result<String> {
     )
 }
 
-async fn run_reload(args: ReloadArgs) -> Result<()> {
-    let resolved = resolve_conn(&args.conn, args.config_path)?;
-    let file_path = reload_config_path(&resolved)?;
-    send_route(
-        &resolved,
-        Operation::Reload,
+/// 単一操作を送る。`Reload` のときだけ設定パスを解決して operand に載せる。
+async fn run_route(conn: &ConnArgs, op: Operation, config_path: Option<String>) -> Result<()> {
+    let resolved = resolve_conn(conn, config_path)?;
+    let operand = if op == Operation::Reload {
         RouteOperand {
-            file_path,
+            file_path: reload_config_path(&resolved)?,
             ..RouteOperand::default()
+        }
+    } else {
+        RouteOperand::default()
+    };
+    send_route(&resolved, op, operand).await
+}
+
+/// 解析済みコマンドから決まる実行内容。送信も I/O も行わない純粋な変換で、
+/// サブコマンドと Operation の対応をテストで固定できるようにしている。
+enum Action {
+    Send(SendArgs),
+    Profile(ProfileCmd),
+    /// 単一操作を送る。`config_path` には reload の明示指定のみが入る。
+    Route {
+        conn: ConnArgs,
+        op: Operation,
+        config_path: Option<String>,
+    },
+}
+
+fn plan(cmd: Commands) -> Action {
+    match cmd {
+        Commands::Send(args) => Action::Send(args),
+        Commands::Profile(cmd) => Action::Profile(cmd),
+        Commands::Pause(conn) => Action::Route {
+            conn,
+            op: Operation::Pause,
+            config_path: None,
         },
-    )
-    .await
+        Commands::Resume(conn) => Action::Route {
+            conn,
+            op: Operation::Resume,
+            config_path: None,
+        },
+        Commands::Reload(args) => Action::Route {
+            conn: args.conn,
+            op: Operation::Reload,
+            config_path: args.config_path,
+        },
+    }
 }
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    match cli.command {
-        Commands::Send(args) => run_send(args).await,
-        Commands::Pause(conn) => {
-            let resolved = resolve_conn(&conn, None)?;
-            send_route(&resolved, Operation::Pause, RouteOperand::default()).await
-        }
-        Commands::Resume(conn) => {
-            let resolved = resolve_conn(&conn, None)?;
-            send_route(&resolved, Operation::Resume, RouteOperand::default()).await
-        }
-        Commands::Reload(args) => run_reload(args).await,
-        Commands::Profile(cmd) => run_profile(cmd),
+    match plan(cli.command) {
+        Action::Send(args) => run_send(args).await,
+        Action::Profile(cmd) => run_profile(cmd),
+        Action::Route {
+            conn,
+            op,
+            config_path,
+        } => run_route(&conn, op, config_path).await,
     }
 }
 
@@ -470,5 +501,42 @@ mod tests {
             msg.contains("profile set"),
             "should point at the profile route too: {msg}"
         );
+    }
+
+    fn planned_operation(argv: &[&str]) -> Operation {
+        match plan(Cli::parse_from(argv).command) {
+            Action::Route { op, .. } => op,
+            _ => panic!("expected a route action for {argv:?}"),
+        }
+    }
+
+    #[test]
+    fn pause_resume_reload_map_to_distinct_operations() {
+        assert_eq!(planned_operation(&["vstc_cli", "pause"]), Operation::Pause);
+        assert_eq!(
+            planned_operation(&["vstc_cli", "resume"]),
+            Operation::Resume
+        );
+        assert_eq!(
+            planned_operation(&["vstc_cli", "reload"]),
+            Operation::Reload
+        );
+    }
+
+    #[test]
+    fn plan_carries_reload_config_path_only() {
+        let Action::Route { config_path, .. } =
+            plan(Cli::parse_from(["vstc_cli", "reload", "--config-path", "c.yml"]).command)
+        else {
+            panic!("expected a route action");
+        };
+        assert_eq!(config_path.as_deref(), Some("c.yml"));
+
+        let Action::Route { config_path, .. } =
+            plan(Cli::parse_from(["vstc_cli", "pause"]).command)
+        else {
+            panic!("expected a route action");
+        };
+        assert_eq!(config_path, None);
     }
 }

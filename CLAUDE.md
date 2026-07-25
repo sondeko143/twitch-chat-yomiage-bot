@@ -35,11 +35,9 @@ just check   # fmt-check + clippy + test + check-env-leak（外部ツール監�
 - **clone 後に一度 `just setup-hooks`**（= `git config core.hooksPath .githooks`）を実行して有効化する。緊急回避は `git commit --no-verify`（多用しない。最終ゲートは `just ci`）。
 - フックは git 同梱 sh で動くため Windows でも追加導入不要。コミット時は実行ビット保持のため `git add --chmod=+x .githooks/pre-commit` を推奨。
 
-### 既知の非ブロッキング警告
-
-- cargo-audit が `yaml-rust` unmaintained（RUSTSEC-2024-0320）を警告するが、推移的依存のため allowed warning 扱いで `just ci` は通る。対応は任意。（advisory-db は随時更新されるため、この一覧は例示。現況は必ず `just audit` / `cargo deny check advisories` を再実行して確認する。）
-
 ### 保留中の脆弱性 advisory（ignore 登録済み）
+
+以下は執筆時点のスナップショット。advisory-db も依存ツリーも随時変わるため、**現況は必ず `just audit` / `cargo deny check advisories` を再実行して確認する**（記述が残っていても既に解消している場合がある）。
 
 - **quick-xml 0.39.4 の DoS 2件（RUSTSEC-2026-0194 / 0195・高7.5）を [deny.toml](deny.toml) と [.cargo/audit.toml](.cargo/audit.toml) の両方で ID 付き ignore に登録**して `just ci` を通している（両ゲートは別リストなので片方だけだと残り一方が赤）。`wayland-scanner`（build-time proc-macro・Linux/Wayland 専用）経由の推移的依存で、最新の wayland-scanner が依然 `quick-xml ^0.39` を要求（上流未対応）のため更新不可。Windows 標的では非コンパイル・信頼済みローカル XML のみ解析で到達不能と評価。**解除トリガ:** `eframe`/`wayland-scanner` の更新で `quick-xml >= 0.41` へ上げられるようになったら両ファイルから ID を削除し再 audit する。トリアージ手順は skill `triaging-cargo-audit` を参照。
 

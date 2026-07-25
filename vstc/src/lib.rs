@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use thiserror::Error;
+use tonic::transport::Channel;
 use url::Url;
 use uuid::Uuid;
 use vstreamer_protos::{
@@ -69,10 +70,7 @@ pub async fn process_command(
     file_path: Option<String>,
     filters: Option<Vec<String>>,
 ) -> Result<Response, VstcError> {
-    let endpoint = tonic::transport::Endpoint::new(uri.to_string())?
-        .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
-        .timeout(Duration::from_secs(RPC_TIMEOUT_SECS));
-    let mut channel = CommanderClient::connect(endpoint).await?;
+    let mut channel = connect(uri).await?;
     let op_routes: Result<Vec<_>, _> = operations
         .iter()
         .map(String::as_ref)
@@ -96,24 +94,50 @@ pub async fn process_command(
     Ok(result.into_inner())
 }
 
-/// Build a text-only `Operand` with a fresh trace id and current origin timestamp.
-fn build_operand(text: String) -> Operand {
+/// Optional [`Operand`] fields for [`process_routes_with_operand`].
+///
+/// `trace_id` and `origin_ts` are generated inside this crate, so callers never
+/// fill them in. Every field has a `Default`, letting a caller set only what its
+/// operation needs — e.g. only `file_path` for `Reload`.
+#[derive(Debug, Default, Clone)]
+pub struct RouteOperand {
+    /// Text payload.
+    pub text: String,
+    /// Path of the config file to act on (used by `Reload`).
+    pub file_path: String,
+    /// Filter names (used by `SetFilters`).
+    pub filters: Vec<String>,
+    /// Raw sound payload.
+    pub sound: Option<Sound>,
+}
+
+/// Build a proto `Operand` from the caller-visible fields, stamping a fresh
+/// trace id and the current origin timestamp.
+fn build_operand(operand: RouteOperand) -> Operand {
     Operand {
-        text,
-        sound: None,
-        file_path: String::new(),
-        filters: Vec::new(),
+        text: operand.text,
+        sound: operand.sound,
+        file_path: operand.file_path,
+        filters: operand.filters,
         trace_id: Uuid::new_v4().to_string(),
         origin_ts: unix_timestamp_secs(),
     }
 }
 
-/// Wrap the given routes into a single-chain `Command` carrying a text-only operand.
-fn build_command(routes: Vec<OperationRoute>, text: String) -> Command {
+/// Wrap the given routes into a single-chain `Command` carrying `operand`.
+fn build_command(routes: Vec<OperationRoute>, operand: RouteOperand) -> Command {
     Command {
         chains: vec![OperationChain { operations: routes }],
-        operand: Some(build_operand(text)),
+        operand: Some(build_operand(operand)),
     }
+}
+
+/// Connect to `uri` with this crate's connect/RPC timeouts applied.
+async fn connect(uri: &str) -> Result<CommanderClient<Channel>, VstcError> {
+    let endpoint = tonic::transport::Endpoint::new(uri.to_string())?
+        .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
+        .timeout(Duration::from_secs(RPC_TIMEOUT_SECS));
+    Ok(CommanderClient::connect(endpoint).await?)
 }
 
 /// Send pre-built operation routes with a text operand to the channel.
@@ -133,11 +157,35 @@ pub async fn process_routes(
     routes: Vec<OperationRoute>,
     text: String,
 ) -> Result<Response, VstcError> {
-    let endpoint = tonic::transport::Endpoint::new(uri.to_string())?
-        .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
-        .timeout(Duration::from_secs(RPC_TIMEOUT_SECS));
-    let mut channel = CommanderClient::connect(endpoint).await?;
-    let c = tonic::Request::new(build_command(routes, text));
+    process_routes_with_operand(
+        uri,
+        routes,
+        RouteOperand {
+            text,
+            ..RouteOperand::default()
+        },
+    )
+    .await
+}
+
+/// Send pre-built operation routes together with the operand fields in
+/// `operand`.
+///
+/// [`process_routes`] covers the text-only case; use this when an operation
+/// needs another operand field, such as `Reload` needing `file_path`.
+///
+/// ## Errors
+///
+/// This function fails under the following circumstances:
+///
+/// * Any error occurring during connecting or sending to the target uri.
+pub async fn process_routes_with_operand(
+    uri: &str,
+    routes: Vec<OperationRoute>,
+    operand: RouteOperand,
+) -> Result<Response, VstcError> {
+    let mut channel = connect(uri).await?;
+    let c = tonic::Request::new(build_command(routes, operand));
     let result = channel.process_command(c).await?;
     Ok(result.into_inner())
 }
@@ -198,13 +246,36 @@ mod tests {
             remote: String::new(),
             queries: HashMap::new(),
         }];
-        let cmd = build_command(routes.clone(), "hello".to_string());
+        let cmd = build_command(
+            routes.clone(),
+            RouteOperand {
+                text: "hello".to_string(),
+                ..RouteOperand::default()
+            },
+        );
         assert_eq!(cmd.chains.len(), 1);
         assert_eq!(cmd.chains[0].operations, routes);
         let operand = cmd.operand.expect("operand present");
         assert_eq!(operand.text, "hello");
         assert!(operand.sound.is_none());
         assert!(!operand.trace_id.is_empty());
+    }
+
+    #[test]
+    fn build_command_carries_optional_operand_fields() {
+        let cmd = build_command(
+            Vec::new(),
+            RouteOperand {
+                file_path: "conf.yml".to_string(),
+                filters: vec!["a".to_string()],
+                ..RouteOperand::default()
+            },
+        );
+        let operand = cmd.operand.expect("operand present");
+        assert_eq!(operand.file_path, "conf.yml");
+        assert_eq!(operand.filters, vec!["a".to_string()]);
+        assert!(operand.text.is_empty());
+        assert!(operand.origin_ts > 0.0);
     }
 
     #[test]

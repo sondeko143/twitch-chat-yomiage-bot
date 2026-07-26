@@ -4,6 +4,7 @@
 #![warn(clippy::all)]
 #![warn(clippy::pedantic)]
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -18,6 +19,10 @@ use vstreamer_protos::{
 
 const CONNECT_TIMEOUT_SECS: u64 = 5;
 const RPC_TIMEOUT_SECS: u64 = 10;
+
+/// Scheme prefix that turns a scheme-less route string into an absolute URL.
+/// It carries no meaning of its own: `Url::parse` only accepts absolute URLs.
+const ROUTE_SCHEME: &str = "o:";
 
 /// All possible errors returned by this library.
 #[derive(Error, Debug)]
@@ -74,7 +79,7 @@ pub async fn process_command(
     let op_routes: Result<Vec<_>, _> = operations
         .iter()
         .map(String::as_ref)
-        .map(convert_to_operation)
+        .map(parse_route)
         .collect();
     let operand = Operand {
         text,
@@ -200,10 +205,57 @@ fn unix_timestamp_secs() -> f64 {
         .map_or(0.0, |d| d.as_secs_f64())
 }
 
-fn convert_to_operation(op_str: &str) -> Result<OperationRoute, VstcError> {
-    let parsed = Url::parse(op_str)?;
+/// True when `s` already starts with a URL scheme (`scheme:`).
+///
+/// RFC 3986 spells a scheme as an ASCII letter followed by letters, digits,
+/// `+`, `-` or `.`, terminated by `:`. Checked by hand so this crate does not
+/// grow a regex dependency. Guarding on the whole prefix (not just "there is a
+/// colon") keeps a query value like `?u=http://x` from being mistaken for one.
+fn has_scheme(s: &str) -> bool {
+    let Some(colon) = s.find(':') else {
+        return false;
+    };
+    let mut chars = s[..colon].chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    first.is_ascii_alphabetic()
+        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+}
+
+/// Make `op_str` absolute so `Url::parse` accepts it (ADR-0018).
+///
+/// * `//host:port/op?q` gains `o:`
+/// * `scheme:...` is left alone, which covers the historical `o:/op` form
+/// * anything else gains `o:/`, so `op?q` becomes `o:/op?q`
+fn normalize_op_str(op_str: &str) -> Cow<'_, str> {
+    if has_scheme(op_str) {
+        Cow::Borrowed(op_str)
+    } else if op_str.starts_with("//") {
+        Cow::Owned(format!("{ROUTE_SCHEME}{op_str}"))
+    } else {
+        Cow::Owned(format!("{ROUTE_SCHEME}/{op_str}"))
+    }
+}
+
+/// Parse one route string into a proto [`OperationRoute`].
+///
+/// Accepts `//host:port/op?query`, a bare `op?query`, and any absolute URL
+/// (including the historical `o:/op` form). Public so a caller can validate a
+/// route before storing it, without sending anything (ADR-0018).
+///
+/// ## Errors
+///
+/// This function fails under the following circumstances:
+///
+/// * The normalized string is not a parsable URL.
+/// * The path names an operation this crate does not know.
+pub fn parse_route(op_str: &str) -> Result<OperationRoute, VstcError> {
+    let normalized = normalize_op_str(op_str);
+    let parsed = Url::parse(&normalized)?;
     let hash_query: HashMap<_, _> = parsed.query_pairs().into_owned().collect();
     let operation = match parsed.path().strip_prefix('/').unwrap_or_default() {
+        "transc" | "transcribe" => Ok(Operation::Transcribe),
         "transl" | "translate" => Ok(Operation::Translate),
         "tts" => Ok(Operation::Tts),
         "play" | "playback" => Ok(Operation::Playback),
@@ -280,7 +332,7 @@ mod tests {
 
     #[test]
     fn convert_without_host() {
-        let result = convert_to_operation("o:/transl?t=en&s=ja").unwrap();
+        let result = parse_route("o:/transl?t=en&s=ja").unwrap();
         let qs = result.queries;
         assert_eq!(qs["s"], "ja");
         assert_eq!(qs["t"], "en");
@@ -288,18 +340,74 @@ mod tests {
 
     #[test]
     fn convert_with_host() {
-        let result = convert_to_operation("o://localhost:8080/transl?t=en&s=ja").unwrap();
+        let result = parse_route("o://localhost:8080/transl?t=en&s=ja").unwrap();
         let remote = result.remote;
         assert_eq!(remote, "//localhost:8080");
         let qs = result.queries;
         assert_eq!(qs["s"], "ja");
         assert_eq!(qs["t"], "en");
 
-        let result = convert_to_operation("https://localhost/transl?t=en&s=ja").unwrap();
+        let result = parse_route("https://localhost/transl?t=en&s=ja").unwrap();
         let remote = result.remote;
         assert_eq!(remote, "//localhost:443");
         let qs = result.queries;
         assert_eq!(qs["s"], "ja");
         assert_eq!(qs["t"], "en");
+    }
+
+    #[test]
+    fn parse_route_accepts_the_scheme_less_remote_form() {
+        let route = parse_route("//localhost:8081/transc").expect("scheme-less remote form");
+        assert_eq!(route.operation, Operation::Transcribe as i32);
+        assert_eq!(route.remote, "//localhost:8081");
+        assert!(route.queries.is_empty());
+    }
+
+    #[test]
+    fn parse_route_accepts_the_scheme_less_bare_form() {
+        let route = parse_route("transl?t=en").expect("scheme-less bare form");
+        assert_eq!(route.operation, Operation::Translate as i32);
+        assert!(route.remote.is_empty(), "no host means no remote");
+        assert_eq!(route.queries["t"], "en");
+    }
+
+    #[test]
+    fn parse_route_still_accepts_the_historical_scheme_form() {
+        // ADR-0018 の正規化は受け付ける入力の拡張であって置き換えではない。
+        let route = parse_route("o:/tts?spd=1.1").expect("o: form");
+        assert_eq!(route.operation, Operation::Tts as i32);
+        assert!(route.remote.is_empty());
+        assert_eq!(route.queries["spd"], "1.1");
+
+        let route = parse_route("o://localhost:8080/transl?t=en").expect("o:// form");
+        assert_eq!(route.remote, "//localhost:8080");
+        assert_eq!(route.queries["t"], "en");
+    }
+
+    #[test]
+    fn parse_route_maps_both_transcribe_aliases() {
+        for s in ["transc", "transcribe"] {
+            let route = parse_route(s).unwrap_or_else(|e| panic!("{s} should parse: {e}"));
+            assert_eq!(route.operation, Operation::Transcribe as i32, "for {s}");
+        }
+    }
+
+    #[test]
+    fn parse_route_does_not_mistake_a_query_value_for_a_scheme() {
+        // 'transl?u=http://x' にはコロンがあるが、その手前は scheme として不正。
+        // scheme 判定を「最初のコロンがあれば scheme」で済ませると、この文字列が
+        // 絶対 URL 扱いのまま Url::parse に渡り、operation が空になって落ちる。
+        let route = parse_route("transl?u=http://x").expect("query value containing a colon");
+        assert_eq!(route.operation, Operation::Translate as i32);
+        assert_eq!(route.queries["u"], "http://x");
+    }
+
+    #[test]
+    fn parse_route_rejects_an_unknown_operation() {
+        let err = parse_route("//localhost:8081/nope").expect_err("unknown operation");
+        assert!(
+            matches!(err, VstcError::OpConvertError { .. }),
+            "should be an operation-conversion error, got {err:?}"
+        );
     }
 }

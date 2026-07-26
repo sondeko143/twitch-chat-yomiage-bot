@@ -138,6 +138,7 @@ mod tests {
                 host: Some("h".to_string()),
                 port: Some(19829),
                 config_path: Some("c.yml".to_string()),
+                chains: None,
             },
         );
         save(&path, &store).expect("save");

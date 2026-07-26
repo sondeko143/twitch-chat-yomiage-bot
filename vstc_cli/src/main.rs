@@ -118,6 +118,34 @@ enum ProfileCmd {
         /// プロファイル名
         name: String,
     },
+    /// send の既定チェーンを管理する
+    #[command(subcommand)]
+    Chains(ChainsCmd),
+}
+
+/// `send` が操作を省略したときに送るチェーンの編集操作（ADR-0018）。
+#[derive(Subcommand)]
+enum ChainsCmd {
+    /// route 列を 1 本のチェーンとして末尾に追加する
+    Add {
+        /// プロファイル名
+        name: String,
+        /// route ex: `//localhost:8081/transc` `transl?t=en`
+        #[arg(required = true)]
+        routes: Vec<String>,
+    },
+    /// 番号を指定してチェーンを削除する
+    Del {
+        /// プロファイル名
+        name: String,
+        /// `chains show` が表示する 1 始まりの番号
+        index: usize,
+    },
+    /// 保存済みチェーンを表示する
+    Show {
+        /// プロファイル名
+        name: String,
+    },
 }
 
 fn run_profile(cmd: ProfileCmd) -> Result<()> {
@@ -136,6 +164,7 @@ fn run_profile(cmd: ProfileCmd) -> Result<()> {
                     host,
                     port,
                     config_path,
+                    chains: None,
                 },
             );
             store::save(&path, &saved)?;
@@ -155,7 +184,59 @@ fn run_profile(cmd: ProfileCmd) -> Result<()> {
             println!("プロファイル '{name}' を削除しました");
             Ok(())
         }
+        ProfileCmd::Chains(cmd) => run_profile_chains(&path, cmd),
     }
+}
+
+/// `profile chains` の 3 操作を実行する。
+///
+/// `add` は保存の前に全 route を検証する。壊れた route をファイルに残すと、
+/// 次に送信するまで気づけないため（ADR-0018）。
+fn run_profile_chains(path: &Path, cmd: ChainsCmd) -> Result<()> {
+    match cmd {
+        ChainsCmd::Add { name, routes } => {
+            validate_routes(&routes)?;
+            let mut saved = store::load(path)?;
+            saved.add_chain(&name, routes)?;
+            store::save(path, &saved)?;
+            println!("プロファイル '{name}' にチェーンを追加しました");
+            Ok(())
+        }
+        ChainsCmd::Del { name, index } => {
+            let mut saved = store::load(path)?;
+            saved.del_chain(&name, index)?;
+            store::save(path, &saved)?;
+            println!("プロファイル '{name}' のチェーン {index} を削除しました");
+            Ok(())
+        }
+        ChainsCmd::Show { name } => {
+            let saved = store::load(path)?;
+            println!("{}", chains_show_output(&name, saved.chains_of(&name)?));
+            Ok(())
+        }
+    }
+}
+
+/// 保存前に全 route を検証する。1 つでも解釈できなければ保存しない。
+fn validate_routes(routes: &[String]) -> Result<()> {
+    for route in routes {
+        vstc::parse_route(route)
+            .with_context(|| format!("route '{route}' を解釈できませんでした"))?;
+    }
+    Ok(())
+}
+
+/// `chains show` の表示内容を組み立てる。0 本は異常ではないので、
+/// 追加方法を案内する。
+fn chains_show_output(name: &str, chains: &[Vec<String>]) -> String {
+    let rendered = profile::render_chains(chains);
+    if rendered.is_empty() {
+        return format!(
+            "プロファイル '{name}' に保存済みチェーンはありません\n\
+             追加: vstc_cli profile chains add {name} <ROUTES>..."
+        );
+    }
+    rendered
 }
 
 /// 一覧の表示内容を組み立てる。0 件は異常ではないので、作り方を案内する。
@@ -408,6 +489,100 @@ mod tests {
     }
 
     #[test]
+    fn profile_chains_add_parses_the_name_and_every_route() {
+        let cli = Cli::parse_from([
+            "vstc_cli",
+            "profile",
+            "chains",
+            "add",
+            "main",
+            "//localhost:8081/transc",
+            "transl?t=en",
+            "//windesk:8080/sub?p=s",
+        ]);
+        let Commands::Profile(ProfileCmd::Chains(ChainsCmd::Add { name, routes })) = cli.command
+        else {
+            panic!("expected profile chains add");
+        };
+        assert_eq!(name, "main");
+        assert_eq!(
+            routes,
+            vec![
+                "//localhost:8081/transc".to_string(),
+                "transl?t=en".to_string(),
+                "//windesk:8080/sub?p=s".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn profile_chains_add_requires_at_least_one_route() {
+        assert!(Cli::try_parse_from(["vstc_cli", "profile", "chains", "add", "main"]).is_err());
+    }
+
+    #[test]
+    fn profile_chains_del_and_show_parse() {
+        let cli = Cli::parse_from(["vstc_cli", "profile", "chains", "del", "main", "2"]);
+        let Commands::Profile(ProfileCmd::Chains(ChainsCmd::Del { name, index })) = cli.command
+        else {
+            panic!("expected profile chains del");
+        };
+        assert_eq!(name, "main");
+        assert_eq!(index, 2);
+
+        let cli = Cli::parse_from(["vstc_cli", "profile", "chains", "show", "main"]);
+        let Commands::Profile(ProfileCmd::Chains(ChainsCmd::Show { name })) = cli.command else {
+            panic!("expected profile chains show");
+        };
+        assert_eq!(name, "main");
+    }
+
+    #[test]
+    fn validate_routes_accepts_every_documented_form() {
+        validate_routes(&[
+            "//localhost:8081/transc".to_string(),
+            "transl?t=en".to_string(),
+            "o:/tts".to_string(),
+        ])
+        .expect("all three documented forms are valid");
+    }
+
+    #[test]
+    fn validate_routes_rejects_an_unparsable_route_naming_it() {
+        let err = validate_routes(&["//localhost:8081/transc".to_string(), "nope".to_string()])
+            .expect_err("an unknown operation must fail before saving");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("nope"),
+            "should name the offending route: {msg}"
+        );
+    }
+
+    #[test]
+    fn chains_show_output_guides_when_the_profile_has_none() {
+        let out = chains_show_output("main", &[]);
+        assert!(
+            out.contains("保存済みチェーンはありません"),
+            "should say there are none: {out}"
+        );
+        assert!(
+            out.contains("profile chains add main"),
+            "should suggest how to add one: {out}"
+        );
+    }
+
+    #[test]
+    fn chains_show_output_renders_the_saved_chains() {
+        let chains = vec![vec!["o:/tts".to_string()]];
+        let out = chains_show_output("main", &chains);
+        assert!(out.contains("[1] o:/tts"), "should number the chain: {out}");
+        assert!(
+            !out.contains("ありません"),
+            "a non-empty profile must not show the empty guidance: {out}"
+        );
+    }
+
+    #[test]
     fn resolve_conn_without_profile_uses_defaults() {
         // このテストは「既定値になる」ことだけを検証する。「ファイルに触れ
         // ない」性質自体は resolve_conn の早期 return（--profile が無ければ
@@ -444,6 +619,7 @@ mod tests {
                 host: Some("h".to_string()),
                 port: Some(1),
                 config_path: None,
+                chains: None,
             },
         );
         let out = profile_list_output(&saved);

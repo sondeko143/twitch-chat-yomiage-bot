@@ -29,6 +29,12 @@ pub struct Profile {
     /// Config file path used by `reload`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub config_path: Option<String>,
+    /// Default operation chains sent by `send` when no operation is given on
+    /// the command line (ADR-0018). Each inner vector is one chain, written as
+    /// route strings. Edited through `profile chains`, never through
+    /// `profile set`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chains: Option<Vec<Vec<String>>>,
 }
 
 /// The whole `profiles.toml` file.
@@ -45,6 +51,9 @@ pub struct ProfileStore {
 impl ProfileStore {
     /// Merge `patch` into the profile named `name`, creating it when absent.
     /// Fields left `None` in `patch` keep their existing value (ADR-0016).
+    ///
+    /// `chains` is deliberately not merged: it is owned by `profile chains`
+    /// (ADR-0018), so a `profile set` can never clear it.
     pub fn merge(&mut self, name: &str, patch: &Profile) {
         let entry = self.profiles.entry(name.to_string()).or_default();
         if patch.host.is_some() {
@@ -77,6 +86,67 @@ impl ProfileStore {
     /// Fails when no profile with that name exists.
     pub fn get(&self, name: &str) -> anyhow::Result<&Profile> {
         self.profiles.get(name).ok_or_else(|| self.unknown(name))
+    }
+
+    /// Append `chain` to the named profile's default chains.
+    ///
+    /// ## Errors
+    ///
+    /// Fails when no profile with that name exists. A typo must not silently
+    /// create a profile — `profile set` is the only command that creates one.
+    pub fn add_chain(&mut self, name: &str, chain: Vec<String>) -> anyhow::Result<()> {
+        if !self.profiles.contains_key(name) {
+            return Err(self.unknown(name));
+        }
+        let entry = self
+            .profiles
+            .get_mut(name)
+            .expect("contains_key checked immediately above");
+        entry.chains.get_or_insert_with(Vec::new).push(chain);
+        Ok(())
+    }
+
+    /// Remove the `index`-th (1-based, as shown by `profile chains show`)
+    /// chain from the named profile.
+    ///
+    /// Removing the last chain drops the field entirely, so the profile ends up
+    /// indistinguishable from one that never saved a chain.
+    ///
+    /// ## Errors
+    ///
+    /// Fails when no profile with that name exists, or when `index` is outside
+    /// the saved range. In both cases nothing is modified.
+    pub fn del_chain(&mut self, name: &str, index: usize) -> anyhow::Result<()> {
+        if !self.profiles.contains_key(name) {
+            return Err(self.unknown(name));
+        }
+        let entry = self
+            .profiles
+            .get_mut(name)
+            .expect("contains_key checked immediately above");
+        let saved = entry.chains.as_ref().map_or(0, Vec::len);
+        if index == 0 || index > saved {
+            return Err(anyhow!(
+                "チェーン番号 {index} は範囲外です（プロファイル '{name}' に保存されているチェーンは {saved} 本）\n\
+                 確認: vstc_cli profile chains show {name}"
+            ));
+        }
+        if let Some(chains) = entry.chains.as_mut() {
+            chains.remove(index - 1);
+            if chains.is_empty() {
+                entry.chains = None;
+            }
+        }
+        Ok(())
+    }
+
+    /// The named profile's saved chains, empty when it has none.
+    ///
+    /// ## Errors
+    ///
+    /// Fails when no profile with that name exists.
+    pub fn chains_of(&self, name: &str) -> anyhow::Result<&[Vec<String>]> {
+        Ok(self.get(name)?.chains.as_deref().unwrap_or(&[]))
     }
 
     /// Error for an unknown profile name, listing what is available so the
@@ -151,11 +221,12 @@ pub fn render_list(store: &ProfileStore) -> String {
     if store.profiles.is_empty() {
         return String::new();
     }
-    let mut rows: Vec<[String; 4]> = vec![[
+    let mut rows: Vec<[String; 5]> = vec![[
         "NAME".to_string(),
         "HOST".to_string(),
         "PORT".to_string(),
         "CONFIG_PATH".to_string(),
+        "CHAINS".to_string(),
     ]];
     for (name, p) in &store.profiles {
         rows.push([
@@ -164,9 +235,12 @@ pub fn render_list(store: &ProfileStore) -> String {
             p.port
                 .map_or_else(|| UNSET.to_string(), |port| port.to_string()),
             p.config_path.clone().unwrap_or_else(|| UNSET.to_string()),
+            p.chains
+                .as_ref()
+                .map_or_else(|| UNSET.to_string(), |c| c.len().to_string()),
         ]);
     }
-    let widths: Vec<usize> = (0..4)
+    let widths: Vec<usize> = (0..5)
         .map(|i| rows.iter().map(|r| r[i].chars().count()).max().unwrap_or(0))
         .collect();
     rows.iter()
@@ -182,6 +256,17 @@ pub fn render_list(store: &ProfileStore) -> String {
         .join("\n")
 }
 
+/// Render the numbered chain list shown by `profile chains show`.
+/// Returns an empty string when the profile has no saved chains.
+pub fn render_chains(chains: &[Vec<String>]) -> String {
+    chains
+        .iter()
+        .enumerate()
+        .map(|(i, chain)| format!("[{}] {}", i + 1, chain.join(" -> ")))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,6 +276,7 @@ mod tests {
             host: Some(host.to_string()),
             port: Some(port),
             config_path: None,
+            chains: None,
         }
     }
 
@@ -210,6 +296,7 @@ mod tests {
                 host: Some("h".to_string()),
                 port: Some(1),
                 config_path: Some("c.yml".to_string()),
+                chains: None,
             },
         );
         store.merge(
@@ -291,6 +378,7 @@ mod tests {
             host: Some("ph".to_string()),
             port: Some(111),
             config_path: Some("pc.yml".to_string()),
+            chains: None,
         };
         let overrides = Overrides {
             host: Some("oh".to_string()),
@@ -310,6 +398,7 @@ mod tests {
             host: Some("ph".to_string()),
             port: Some(111),
             config_path: Some("pc.yml".to_string()),
+            chains: None,
         };
         let overrides = Overrides {
             port: Some(222),
@@ -348,6 +437,7 @@ mod tests {
                 host: Some("ah".to_string()),
                 port: Some(1),
                 config_path: Some("a.yml".to_string()),
+                chains: None,
             },
         );
         let rendered = render_list(&store);
@@ -373,6 +463,7 @@ mod tests {
                 host: Some("h".to_string()),
                 port: Some(19829),
                 config_path: Some("c.yml".to_string()),
+                chains: None,
             },
         );
         let text = toml::to_string(&store).expect("serialize");
@@ -403,6 +494,223 @@ mod tests {
     fn empty_toml_deserializes_to_empty_store() {
         let back: ProfileStore = toml::from_str("").expect("deserialize empty");
         assert!(back.profiles.is_empty());
+    }
+
+    #[test]
+    fn render_chains_numbers_from_one_and_shows_hop_order() {
+        let chains = vec![
+            vec![
+                "//localhost:8081/transc".to_string(),
+                "//windesk:8080/sub".to_string(),
+            ],
+            vec![
+                "//localhost:8081/transc".to_string(),
+                "transl?t=en".to_string(),
+            ],
+        ];
+        let rendered = render_chains(&chains);
+        let lines: Vec<&str> = rendered.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(
+            lines[0],
+            "[1] //localhost:8081/transc -> //windesk:8080/sub"
+        );
+        assert_eq!(lines[1], "[2] //localhost:8081/transc -> transl?t=en");
+    }
+
+    #[test]
+    fn render_chains_is_empty_when_there_are_none() {
+        assert_eq!(render_chains(&[]), "");
+    }
+
+    #[test]
+    fn render_list_shows_the_saved_chain_count() {
+        let mut store = ProfileStore::default();
+        store.merge("main", &profile("h", 1));
+        store.merge("sub", &profile("h", 2));
+        store
+            .add_chain("main", vec!["tts".to_string()])
+            .expect("add");
+        store
+            .add_chain("main", vec!["transl?t=en".to_string()])
+            .expect("add");
+        let rendered = render_list(&store);
+        let lines: Vec<&str> = rendered.lines().collect();
+        assert_eq!(lines.len(), 3, "header + 2 rows");
+        assert!(
+            lines[0].contains("CHAINS"),
+            "header should name the column: {}",
+            lines[0]
+        );
+        assert!(
+            lines[1].ends_with('2'),
+            "main has 2 saved chains: {}",
+            lines[1]
+        );
+        assert!(
+            lines[2].ends_with('-'),
+            "sub has none, shown as unset: {}",
+            lines[2]
+        );
+    }
+
+    #[test]
+    fn add_chain_appends_to_an_existing_profile() {
+        let mut store = ProfileStore::default();
+        store.merge("main", &profile("h", 1));
+        store
+            .add_chain("main", vec!["//h:1/transc".to_string(), "sub".to_string()])
+            .expect("add");
+        store
+            .add_chain("main", vec!["tts".to_string()])
+            .expect("add");
+        let got = store.profiles["main"].chains.clone().expect("chains saved");
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0], vec!["//h:1/transc".to_string(), "sub".to_string()]);
+        assert_eq!(got[1], vec!["tts".to_string()]);
+    }
+
+    #[test]
+    fn add_chain_to_an_unknown_profile_errors_and_creates_nothing() {
+        let mut store = ProfileStore::default();
+        store.merge("main", &profile("h", 1));
+        let err = store
+            .add_chain("nope", vec!["tts".to_string()])
+            .expect_err("unknown name should error");
+        let msg = err.to_string();
+        assert!(msg.contains("nope"), "should name the profile: {msg}");
+        assert!(msg.contains("main"), "should list known names: {msg}");
+        assert_eq!(
+            store.profiles.len(),
+            1,
+            "a typo must not silently create a profile"
+        );
+    }
+
+    #[test]
+    fn del_chain_removes_by_one_based_index() {
+        let mut store = ProfileStore::default();
+        store.merge("main", &profile("h", 1));
+        for op in ["a-tts", "b-tts", "c-tts"] {
+            store.add_chain("main", vec![op.to_string()]).expect("add");
+        }
+        store.del_chain("main", 2).expect("del the middle one");
+        let got = store.profiles["main"].chains.clone().expect("chains saved");
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0], vec!["a-tts".to_string()]);
+        assert_eq!(got[1], vec!["c-tts".to_string()]);
+    }
+
+    #[test]
+    fn del_chain_of_the_last_chain_clears_the_field() {
+        let mut store = ProfileStore::default();
+        store.merge("main", &profile("h", 1));
+        store
+            .add_chain("main", vec!["tts".to_string()])
+            .expect("add");
+        store.del_chain("main", 1).expect("del");
+        assert_eq!(
+            store.profiles["main"].chains, None,
+            "the profile must end up identical to one that never saved a chain"
+        );
+    }
+
+    #[test]
+    fn del_chain_rejects_out_of_range_indexes_without_changing_anything() {
+        let mut store = ProfileStore::default();
+        store.merge("main", &profile("h", 1));
+        store
+            .add_chain("main", vec!["tts".to_string()])
+            .expect("add");
+        for bad in [0, 2, 99] {
+            let err = store
+                .del_chain("main", bad)
+                .expect_err("out-of-range index should error");
+            let msg = err.to_string();
+            assert!(
+                msg.contains("1 本"),
+                "should state how many are saved (for {bad}): {msg}"
+            );
+        }
+        assert_eq!(
+            store.profiles["main"].chains.as_ref().map(Vec::len),
+            Some(1),
+            "a rejected delete must leave the chains untouched"
+        );
+    }
+
+    #[test]
+    fn chains_of_returns_empty_for_a_profile_without_chains() {
+        let mut store = ProfileStore::default();
+        store.merge("main", &profile("h", 1));
+        assert!(store.chains_of("main").expect("known profile").is_empty());
+    }
+
+    #[test]
+    fn chains_of_an_unknown_profile_errors() {
+        let store = ProfileStore::default();
+        assert!(store.chains_of("nope").is_err());
+    }
+
+    #[test]
+    fn merge_never_touches_saved_chains() {
+        // `profile set` は host/port/config_path 専用。チェーンは
+        // `profile chains` が持つので、set が消してはいけない（ADR-0018）。
+        let mut store = ProfileStore::default();
+        store.merge("main", &profile("h", 1));
+        store
+            .add_chain("main", vec!["tts".to_string()])
+            .expect("add");
+        store.merge(
+            "main",
+            &Profile {
+                port: Some(2),
+                ..Profile::default()
+            },
+        );
+        assert_eq!(
+            store.profiles["main"].chains.as_ref().map(Vec::len),
+            Some(1)
+        );
+        assert_eq!(store.profiles["main"].port, Some(2));
+    }
+
+    #[test]
+    fn chains_round_trip_through_toml() {
+        let mut store = ProfileStore::default();
+        store.merge("main", &profile("h", 1));
+        store
+            .add_chain(
+                "main",
+                vec![
+                    "//localhost:8081/transc".to_string(),
+                    "//windesk:8080/sub".to_string(),
+                ],
+            )
+            .expect("add");
+        store
+            .add_chain(
+                "main",
+                vec![
+                    "//localhost:8081/transc".to_string(),
+                    "transl?t=en".to_string(),
+                ],
+            )
+            .expect("add");
+        let text = toml::to_string(&store).expect("serialize");
+        let back: ProfileStore = toml::from_str(&text).expect("deserialize");
+        assert_eq!(back, store);
+    }
+
+    #[test]
+    fn a_profile_without_chains_writes_no_chains_key() {
+        let mut store = ProfileStore::default();
+        store.merge("main", &profile("h", 1));
+        let text = toml::to_string(&store).expect("serialize");
+        assert!(
+            !text.contains("chains"),
+            "unset chains must stay out of the file: {text}"
+        );
     }
 
     #[test]

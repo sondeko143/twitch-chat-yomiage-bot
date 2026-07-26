@@ -1,6 +1,6 @@
 # 0018. プロファイル既定チェーンを operations 省略時のみ適用し単一 Command の複数 chains で送る
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-07-26
 - Related: [vstc_cli 既定チェーン spec](../superpowers/specs/2026-07-26-vstc-cli-default-chains-design.md), [ADR-0009](0009-add-process-routes-entrypoint-to-vstc.md), [ADR-0015](0015-single-profiles-toml-in-os-user-config-dir.md), [ADR-0016](0016-explicit-flags-override-profile-and-set-merges.md), [ADR-0017](0017-extend-vstc-routes-entrypoint-with-operand-options.md)
 

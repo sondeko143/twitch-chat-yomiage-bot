@@ -190,3 +190,66 @@ async fn process_routes_with_operand_carries_file_path() {
     assert_eq!(op, Operation::Reload as i32);
     assert_eq!(file_path, "some/config.yml");
 }
+
+#[tokio::test]
+async fn process_chains_with_operand_sends_every_chain_in_one_command() {
+    use std::collections::HashMap;
+    use std::sync::mpsc::channel;
+    use std::time::Duration;
+    use vstreamer_protos::{Operation, OperationRoute};
+
+    const ADDR_STR: &str = "127.0.0.1:9004";
+    let (tx, rx) = channel();
+    tokio::spawn(async move {
+        let mut mock = MockCommanderService::new();
+        mock.expect_process_command().returning(move |req| {
+            let inner = req.into_inner();
+            let operand = inner.operand.expect("operand should be present");
+            let shapes: Vec<usize> = inner.chains.iter().map(|c| c.operations.len()).collect();
+            tx.send((shapes, operand.trace_id, operand.text))
+                .expect("test channel should accept the command");
+            Ok(tonic::Response::new(Response { result: true }))
+        });
+        let addr = ADDR_STR.parse().unwrap();
+        build(mock).serve(addr).await.unwrap();
+    });
+
+    let route = |op: Operation| OperationRoute {
+        operation: op as i32,
+        remote: String::new(),
+        queries: HashMap::new(),
+    };
+    process_chains_with_operand(
+        format!("http://{ADDR_STR}").as_str(),
+        vec![
+            vec![route(Operation::Transcribe)],
+            vec![route(Operation::Transcribe), route(Operation::Translate)],
+            vec![
+                route(Operation::Transcribe),
+                route(Operation::Translate),
+                route(Operation::Subtitle),
+            ],
+        ],
+        RouteOperand {
+            text: String::from("one input"),
+            ..RouteOperand::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    let (shapes, trace_id, text) = rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("server should have received a command");
+    assert_eq!(
+        shapes,
+        vec![1, 2, 3],
+        "each chain must arrive intact and in order"
+    );
+    assert!(!trace_id.is_empty());
+    assert_eq!(text, "one input");
+    assert!(
+        rx.recv_timeout(Duration::from_millis(200)).is_err(),
+        "chains must not be split across multiple commands"
+    );
+}

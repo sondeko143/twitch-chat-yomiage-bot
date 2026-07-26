@@ -75,28 +75,22 @@ pub async fn process_command(
     file_path: Option<String>,
     filters: Option<Vec<String>>,
 ) -> Result<Response, VstcError> {
-    let mut channel = connect(uri).await?;
-    let op_routes: Result<Vec<_>, _> = operations
+    let routes: Result<Vec<_>, _> = operations
         .iter()
         .map(String::as_ref)
         .map(parse_route)
         .collect();
-    let operand = Operand {
-        text,
-        sound,
-        file_path: file_path.unwrap_or_default(),
-        filters: filters.unwrap_or_default(),
-        trace_id: Uuid::new_v4().to_string(),
-        origin_ts: unix_timestamp_secs(),
-    };
-    let c = tonic::Request::new(Command {
-        chains: vec![OperationChain {
-            operations: op_routes?,
-        }],
-        operand: Some(operand),
-    });
-    let result = channel.process_command(c).await?;
-    Ok(result.into_inner())
+    process_chains_with_operand(
+        uri,
+        vec![routes?],
+        RouteOperand {
+            text,
+            sound,
+            file_path: file_path.unwrap_or_default(),
+            filters: filters.unwrap_or_default(),
+        },
+    )
+    .await
 }
 
 /// Optional [`Operand`] fields for [`process_routes_with_operand`].
@@ -129,10 +123,15 @@ fn build_operand(operand: RouteOperand) -> Operand {
     }
 }
 
-/// Wrap the given routes into a single-chain `Command` carrying `operand`.
-fn build_command(routes: Vec<OperationRoute>, operand: RouteOperand) -> Command {
+/// Wrap the given chains into a `Command` carrying a single shared `operand`.
+///
+/// Every chain sees the same input and the same trace id (ADR-0018).
+fn build_command(chains: Vec<Vec<OperationRoute>>, operand: RouteOperand) -> Command {
     Command {
-        chains: vec![OperationChain { operations: routes }],
+        chains: chains
+            .into_iter()
+            .map(|operations| OperationChain { operations })
+            .collect(),
         operand: Some(build_operand(operand)),
     }
 }
@@ -189,8 +188,28 @@ pub async fn process_routes_with_operand(
     routes: Vec<OperationRoute>,
     operand: RouteOperand,
 ) -> Result<Response, VstcError> {
+    process_chains_with_operand(uri, vec![routes], operand).await
+}
+
+/// Send several operation chains together, sharing one operand.
+///
+/// [`process_routes_with_operand`] covers the single-chain case. Use this when
+/// one input fans out to several destinations: the chains travel in a single
+/// `Command`, so the server sees one request and every chain shares the same
+/// `trace_id` (ADR-0018).
+///
+/// ## Errors
+///
+/// This function fails under the following circumstances:
+///
+/// * Any error occurring during connecting or sending to the target uri.
+pub async fn process_chains_with_operand(
+    uri: &str,
+    chains: Vec<Vec<OperationRoute>>,
+    operand: RouteOperand,
+) -> Result<Response, VstcError> {
     let mut channel = connect(uri).await?;
-    let c = tonic::Request::new(build_command(routes, operand));
+    let c = tonic::Request::new(build_command(chains, operand));
     let result = channel.process_command(c).await?;
     Ok(result.into_inner())
 }
@@ -299,7 +318,7 @@ mod tests {
             queries: HashMap::new(),
         }];
         let cmd = build_command(
-            routes.clone(),
+            vec![routes.clone()],
             RouteOperand {
                 text: "hello".to_string(),
                 ..RouteOperand::default()
@@ -316,7 +335,7 @@ mod tests {
     #[test]
     fn build_command_carries_optional_operand_fields() {
         let cmd = build_command(
-            Vec::new(),
+            vec![Vec::new()],
             RouteOperand {
                 file_path: "conf.yml".to_string(),
                 filters: vec!["a".to_string()],
@@ -328,6 +347,40 @@ mod tests {
         assert_eq!(operand.filters, vec!["a".to_string()]);
         assert!(operand.text.is_empty());
         assert!(operand.origin_ts > 0.0);
+    }
+
+    #[test]
+    fn build_command_keeps_each_chain_separate() {
+        let route = |op: Operation, remote: &str| OperationRoute {
+            operation: op as i32,
+            remote: remote.to_string(),
+            queries: HashMap::new(),
+        };
+        let first = vec![route(Operation::Transcribe, "//h1:1")];
+        let second = vec![
+            route(Operation::Translate, ""),
+            route(Operation::Subtitle, "//h2:2"),
+        ];
+        let cmd = build_command(vec![first.clone(), second.clone()], RouteOperand::default());
+        assert_eq!(cmd.chains.len(), 2);
+        assert_eq!(cmd.chains[0].operations, first, "chain order must be kept");
+        assert_eq!(cmd.chains[1].operations, second);
+    }
+
+    #[test]
+    fn build_command_shares_one_operand_across_chains() {
+        // ADR-0018: N 本のチェーンは 1 つの入力を共有する。trace_id も 1 つ。
+        let cmd = build_command(
+            vec![Vec::new(), Vec::new(), Vec::new()],
+            RouteOperand {
+                text: "hi".to_string(),
+                ..RouteOperand::default()
+            },
+        );
+        assert_eq!(cmd.chains.len(), 3);
+        let operand = cmd.operand.expect("operand present");
+        assert_eq!(operand.text, "hi");
+        assert!(!operand.trace_id.is_empty());
     }
 
     #[test]

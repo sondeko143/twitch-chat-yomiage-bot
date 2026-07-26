@@ -186,6 +186,10 @@ pub struct Resolved {
     pub port: u16,
     /// Config file path, if any source supplied one.
     pub config_path: Option<String>,
+    /// Default chains from the profile, empty when none are saved. There is no
+    /// command-line override: explicit operations replace these wholesale
+    /// rather than merging field by field (ADR-0018).
+    pub chains: Vec<Vec<String>>,
 }
 
 impl Resolved {
@@ -212,6 +216,7 @@ pub fn resolve(profile: Option<&Profile>, overrides: &Overrides) -> Resolved {
             .config_path
             .clone()
             .or_else(|| profile.and_then(|p| p.config_path.clone())),
+        chains: profile.and_then(|p| p.chains.clone()).unwrap_or_default(),
     }
 }
 
@@ -494,6 +499,19 @@ mod tests {
     fn empty_toml_deserializes_to_empty_store() {
         let back: ProfileStore = toml::from_str("").expect("deserialize empty");
         assert!(back.profiles.is_empty());
+    }
+
+    #[test]
+    fn resolve_carries_the_profiles_chains() {
+        let mut p = profile("h", 1);
+        p.chains = Some(vec![vec!["tts".to_string()]]);
+        let got = resolve(Some(&p), &Overrides::default());
+        assert_eq!(got.chains, vec![vec!["tts".to_string()]]);
+    }
+
+    #[test]
+    fn resolve_without_a_profile_has_no_chains() {
+        assert!(resolve(None, &Overrides::default()).chains.is_empty());
     }
 
     #[test]

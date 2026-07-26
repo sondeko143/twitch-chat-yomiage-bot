@@ -2,7 +2,7 @@ mod profile;
 mod sound;
 mod store;
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::{Args, Parser, Subcommand};
 use profile::{Overrides, Profile, ProfileStore, Resolved};
 use std::collections::HashMap;
@@ -275,17 +275,83 @@ async fn run_send(args: SendArgs) -> Result<()> {
     let resolved = resolve_conn(&args.conn, None)?;
     let uri = resolved.uri();
     let sound = load_sound(args.wav.as_deref())?;
-    vstc::process_command(
+    let chains = chains_for_send(&args.operations, &resolved.chains)?;
+    let origin = chains_origin(&args.operations, args.conn.profile.as_deref());
+    let routes = parse_chains(&chains, &origin)?;
+    vstc::process_chains_with_operand(
         &uri,
-        &args.operations,
-        args.text.unwrap_or_default(),
-        sound,
-        args.file_path,
-        args.filters,
+        routes,
+        RouteOperand {
+            text: args.text.unwrap_or_default(),
+            sound,
+            file_path: args.file_path.unwrap_or_default(),
+            filters: args.filters.unwrap_or_default(),
+        },
     )
     .await
     .with_context(|| format!("{uri} への送信に失敗しました"))?;
     Ok(())
+}
+
+/// `send` が実際に送るチェーンを決める。位置引数があればそれだけを 1 本の
+/// チェーンとして送り、無ければプロファイルの保存済みチェーンを送る
+/// （ADR-0018）。送信も I/O も行わない純粋な変換なので、この優先順位を
+/// テストで固定できる。
+///
+/// ## Errors
+///
+/// どちらの経路からもチェーンを得られなかったとき。無言の no-op を送るより、
+/// 両方の指定方法を案内して止める。
+fn chains_for_send(operations: &[String], saved: &[Vec<String>]) -> Result<Vec<Vec<String>>> {
+    if !operations.is_empty() {
+        return Ok(vec![operations.to_vec()]);
+    }
+    if !saved.is_empty() {
+        return Ok(saved.to_vec());
+    }
+    Err(anyhow!(
+        "送信する操作がありません\n\
+         操作を直接渡すか: vstc_cli send 'o:/tts' -t \"hello\"\n\
+         プロファイルに保存してください: vstc_cli profile chains add <NAME> <ROUTES>..."
+    ))
+}
+
+/// エラーメッセージでチェーンの出所を示すラベル。`chains_for_send` と同じ
+/// 分岐を辿るので、どちらが選ばれたかが文言に反映される。
+fn chains_origin(operations: &[String], profile: Option<&str>) -> String {
+    if !operations.is_empty() {
+        return "コマンドライン引数".to_string();
+    }
+    profile.map_or_else(
+        || "保存済みチェーン".to_string(),
+        |name| format!("プロファイル '{name}'"),
+    )
+}
+
+/// 文字列のチェーンを proto の route へ変換する。どのチェーンのどの route が
+/// 壊れているかを示せるよう、出所と 1 始まりの番号を添えてエラーにする。
+///
+/// ## Errors
+///
+/// いずれかの route を解釈できなかったとき。
+fn parse_chains(chains: &[Vec<String>], origin: &str) -> Result<Vec<Vec<OperationRoute>>> {
+    chains
+        .iter()
+        .enumerate()
+        .map(|(i, chain)| {
+            chain
+                .iter()
+                .map(|route| {
+                    vstc::parse_route(route).with_context(|| {
+                        format!(
+                            "{origin}: {} 本目のチェーンの route '{route}' を解釈できませんでした",
+                            i + 1
+                        )
+                    })
+                })
+                .collect()
+        })
+        .collect()
 }
 
 /// 単一の操作だけを持つ route を組む。宛先は uri 側で決まるので remote は空。
@@ -486,6 +552,86 @@ mod tests {
             panic!("expected profile remove");
         };
         assert_eq!(name, "sub");
+    }
+
+    #[test]
+    fn chains_for_send_prefers_command_line_operations() {
+        // ADR-0018: 明示した操作が勝ち、保存済みチェーンは同乗しない。
+        let operations = vec!["o:/tts".to_string()];
+        let saved = vec![vec!["transl?t=en".to_string()]];
+        let got = chains_for_send(&operations, &saved).expect("operations win");
+        assert_eq!(got, vec![vec!["o:/tts".to_string()]]);
+    }
+
+    #[test]
+    fn chains_for_send_falls_back_to_the_saved_chains() {
+        let saved = vec![
+            vec![
+                "//localhost:8081/transc".to_string(),
+                "//windesk:8080/sub".to_string(),
+            ],
+            vec![
+                "//localhost:8081/transc".to_string(),
+                "transl?t=en".to_string(),
+            ],
+        ];
+        let got = chains_for_send(&[], &saved).expect("saved chains are used");
+        assert_eq!(got, saved);
+    }
+
+    #[test]
+    fn chains_for_send_without_any_source_errors_with_guidance() {
+        let err = chains_for_send(&[], &[]).expect_err("nothing to send");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("send"),
+            "should show the positional form: {msg}"
+        );
+        assert!(
+            msg.contains("profile chains add"),
+            "should show the saved form too: {msg}"
+        );
+    }
+
+    #[test]
+    fn chains_origin_distinguishes_the_two_sources() {
+        assert_eq!(
+            chains_origin(&["o:/tts".to_string()], Some("main")),
+            "コマンドライン引数"
+        );
+        assert_eq!(chains_origin(&[], Some("main")), "プロファイル 'main'");
+        assert_eq!(chains_origin(&[], None), "保存済みチェーン");
+    }
+
+    #[test]
+    fn parse_chains_converts_every_chain() {
+        let chains = vec![
+            vec!["//localhost:8081/transc".to_string()],
+            vec!["transl?t=en".to_string(), "//windesk:8080/sub".to_string()],
+        ];
+        let got = parse_chains(&chains, "コマンドライン引数").expect("all routes are valid");
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].len(), 1);
+        assert_eq!(got[1].len(), 2);
+        assert_eq!(got[0][0].operation, Operation::Transcribe as i32);
+        assert_eq!(got[1][1].remote, "//windesk:8080");
+    }
+
+    #[test]
+    fn parse_chains_names_the_origin_chain_number_and_route() {
+        let chains = vec![
+            vec!["o:/tts".to_string()],
+            vec!["//localhost:8081/transc".to_string(), "nope".to_string()],
+        ];
+        let err = parse_chains(&chains, "プロファイル 'main'")
+            .expect_err("the second chain has a bad route");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("プロファイル 'main'"),
+            "should name the origin: {msg}"
+        );
+        assert!(msg.contains('2'), "should name the chain number: {msg}");
+        assert!(msg.contains("nope"), "should name the route: {msg}");
     }
 
     #[test]

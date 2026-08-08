@@ -1,7 +1,7 @@
 use crate::{api, store::Store};
 use anyhow::bail;
 use log::warn;
-use std::path::Path;
+use std::{path::Path, time::Duration};
 
 fn format_chatters_line(
     now: chrono::NaiveDateTime,
@@ -19,45 +19,19 @@ fn format_chatters_line(
     format!("{},{}", now.format("%Y-%m-%d %H:%M:%S"), users.join(","))
 }
 
-pub async fn chatters(
-    db_dir: &Path,
-    db_name: &str,
+async fn resolve_channel_user_id(
+    store: &mut Store,
     channel_name: &str,
-    username: &str,
     client_id: &str,
     client_secret: &str,
-) -> anyhow::Result<()> {
-    let mut store = Store::new(db_dir, db_name)?;
-    let user_id = store.user_id(username, client_id).await?;
-    let channel_user_id;
+) -> anyhow::Result<String> {
     loop {
         match api::get_user(channel_name, store.access_token(), client_id).await {
             Ok(channel_user) => {
                 if channel_user.data.is_empty() {
                     bail!("channel not found");
                 }
-                channel_user_id = channel_user.data[0].id.clone();
-                break;
-            }
-            Err(err) => {
-                if err.status() == Some(reqwest::StatusCode::UNAUTHORIZED) {
-                    warn!("refresh token: {}", err);
-                    store.update_tokens(client_id, client_secret).await?;
-                } else {
-                    bail!(err);
-                }
-            }
-        };
-    }
-    loop {
-        match api::get_chatters(&channel_user_id, &user_id, store.access_token(), client_id).await {
-            Ok(res) => {
-                let now = chrono::Local::now().naive_local();
-                println!(
-                    "{}",
-                    format_chatters_line(now, &res, channel_name, username)
-                );
-                break;
+                return Ok(channel_user.data[0].id.clone());
             }
             Err(err) => {
                 if err.status() == Some(reqwest::StatusCode::UNAUTHORIZED) {
@@ -69,7 +43,81 @@ pub async fn chatters(
             }
         }
     }
-    Ok(())
+}
+
+async fn chatters_tick(
+    store: &mut Store,
+    channel_user_id: &str,
+    user_id: &str,
+    channel_name: &str,
+    username: &str,
+    client_id: &str,
+    client_secret: &str,
+) -> anyhow::Result<()> {
+    loop {
+        match api::get_chatters(channel_user_id, user_id, store.access_token(), client_id).await {
+            Ok(res) => {
+                let now = chrono::Local::now().naive_local();
+                println!(
+                    "{}",
+                    format_chatters_line(now, &res, channel_name, username)
+                );
+                return Ok(());
+            }
+            Err(err) => {
+                if err.status() == Some(reqwest::StatusCode::UNAUTHORIZED) {
+                    warn!("refresh token: {}", err);
+                    store.update_tokens(client_id, client_secret).await?;
+                } else {
+                    bail!(err);
+                }
+            }
+        }
+    }
+}
+
+pub async fn chatters(
+    db_dir: &Path,
+    db_name: &str,
+    channel_name: &str,
+    username: &str,
+    client_id: &str,
+    client_secret: &str,
+    interval: Option<Duration>,
+) -> anyhow::Result<()> {
+    let mut store = Store::new(db_dir, db_name)?;
+    let user_id = store.user_id(username, client_id).await?;
+    let channel_user_id =
+        resolve_channel_user_id(&mut store, channel_name, client_id, client_secret).await?;
+
+    let Some(period) = interval else {
+        return chatters_tick(
+            &mut store,
+            &channel_user_id,
+            &user_id,
+            channel_name,
+            username,
+            client_id,
+            client_secret,
+        )
+        .await;
+    };
+
+    let mut ticker = tokio::time::interval(period);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        ticker.tick().await;
+        chatters_tick(
+            &mut store,
+            &channel_user_id,
+            &user_id,
+            channel_name,
+            username,
+            client_id,
+            client_secret,
+        )
+        .await?;
+    }
 }
 
 pub async fn show_user_info(

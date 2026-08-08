@@ -111,6 +111,7 @@ async fn main() -> Result<()> {
                 &settings.username,
                 &settings.client_id,
                 &settings.client_secret,
+                None,
             )
             .await?;
         }

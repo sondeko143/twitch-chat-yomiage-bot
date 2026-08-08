@@ -58,3 +58,5 @@ spec 承認後、plan の手前で毎回判定する。1 つでも該当した�
 | [0016](0016-explicit-flags-override-profile-and-set-merges.md) | 設定値は「明示フラグ > プロファイル > 既定」で解決し profile set はマージ更新にする | Accepted | 2026-07-26 | [vstc_cli プロファイル](../superpowers/specs/2026-07-26-vstc-cli-profiles-design.md) |
 | [0017](0017-extend-vstc-routes-entrypoint-with-operand-options.md) | file_path を運ぶため vstc に operand オプション付きの route 送信口を足す | Accepted | 2026-07-26 | [vstc_cli プロファイル](../superpowers/specs/2026-07-26-vstc-cli-profiles-design.md) |
 | [0018](0018-profile-default-chains-in-a-single-command.md) | プロファイル既定チェーンを operations 省略時のみ適用し単一 Command の複数 chains で送る | Accepted | 2026-07-26 | [vstc_cli 既定チェーン](../superpowers/specs/2026-07-26-vstc-cli-default-chains-design.md) |
+| [0019](0019-foreground-only-daemon-for-show-chatters.md) | show-chatters の常駐は前面ループに限定し再起動を OS に委ねる | Proposed | 2026-08-09 | [show-chatters 常駐](../superpowers/specs/2026-08-09-tcyb-show-chatters-daemon-design.md) |
+| [0020](0020-interval-option-on-show-chatters.md) | 周期取得は show-chatters の `--interval` で表し新サブコマンドも設定キーも作らない | Proposed | 2026-08-09 | [show-chatters 常駐](../superpowers/specs/2026-08-09-tcyb-show-chatters-daemon-design.md) |

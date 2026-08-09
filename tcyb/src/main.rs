@@ -42,6 +42,7 @@ enum Commands {
 }
 
 /// `run` を Ctrl+C 受信まで走らせる。先に完了した方の結果を返す。
+/// Ctrl+C が先に来た場合、`run` は完了を待たずその場でキャンセルされる（HTTP リクエストの途中でも中断されうる）。
 async fn run_until_ctrl_c(run: impl std::future::Future<Output = Result<()>>) -> Result<()> {
     tokio::select! {
         res = run => res,

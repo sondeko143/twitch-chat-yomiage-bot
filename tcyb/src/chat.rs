@@ -29,13 +29,15 @@ where
     F: FnMut(String) -> Fut,
     Fut: std::future::Future<Output = Result<T, reqwest::Error>>,
 {
+    let mut refreshed = false;
     loop {
         match call(store.access_token().to_string()).await {
             Ok(value) => return Ok(value),
             Err(err) => {
-                if err.status() == Some(reqwest::StatusCode::UNAUTHORIZED) {
+                if err.status() == Some(reqwest::StatusCode::UNAUTHORIZED) && !refreshed {
                     warn!("refresh token: {}", err);
                     store.update_tokens(client_id, client_secret).await?;
+                    refreshed = true;
                 } else {
                     bail!(err);
                 }
@@ -110,6 +112,9 @@ pub async fn chatters(
 
     let mut ticker = tokio::time::interval(period);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // このループは break しない: 唯一の脱出経路は `?` による Err 伝播で、正常終了は
+    // 呼び出し元の select!（Ctrl+C アーム）が担う。break を足すと Ctrl+C 無しで
+    // 常駐が「成功」する経路が生まれるので注意。
     loop {
         ticker.tick().await;
         chatters_tick(

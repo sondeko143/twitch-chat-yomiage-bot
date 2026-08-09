@@ -19,20 +19,19 @@ fn format_chatters_line(
     format!("{},{}", now.format("%Y-%m-%d %H:%M:%S"), users.join(","))
 }
 
-async fn resolve_channel_user_id(
+async fn with_token_refresh<T, F, Fut>(
     store: &mut Store,
-    channel_name: &str,
     client_id: &str,
     client_secret: &str,
-) -> anyhow::Result<String> {
+    mut call: F,
+) -> anyhow::Result<T>
+where
+    F: FnMut(String) -> Fut,
+    Fut: std::future::Future<Output = Result<T, reqwest::Error>>,
+{
     loop {
-        match api::get_user(channel_name, store.access_token(), client_id).await {
-            Ok(channel_user) => {
-                if channel_user.data.is_empty() {
-                    bail!("channel not found");
-                }
-                return Ok(channel_user.data[0].id.clone());
-            }
+        match call(store.access_token().to_string()).await {
+            Ok(value) => return Ok(value),
             Err(err) => {
                 if err.status() == Some(reqwest::StatusCode::UNAUTHORIZED) {
                     warn!("refresh token: {}", err);
@@ -45,6 +44,22 @@ async fn resolve_channel_user_id(
     }
 }
 
+async fn resolve_channel_user_id(
+    store: &mut Store,
+    channel_name: &str,
+    client_id: &str,
+    client_secret: &str,
+) -> anyhow::Result<String> {
+    let channel_user = with_token_refresh(store, client_id, client_secret, |token| async move {
+        api::get_user(channel_name, &token, client_id).await
+    })
+    .await?;
+    if channel_user.data.is_empty() {
+        bail!("channel not found");
+    }
+    Ok(channel_user.data[0].id.clone())
+}
+
 async fn chatters_tick(
     store: &mut Store,
     channel_user_id: &str,
@@ -54,26 +69,16 @@ async fn chatters_tick(
     client_id: &str,
     client_secret: &str,
 ) -> anyhow::Result<()> {
-    loop {
-        match api::get_chatters(channel_user_id, user_id, store.access_token(), client_id).await {
-            Ok(res) => {
-                let now = chrono::Local::now().naive_local();
-                println!(
-                    "{}",
-                    format_chatters_line(now, &res, channel_name, username)
-                );
-                return Ok(());
-            }
-            Err(err) => {
-                if err.status() == Some(reqwest::StatusCode::UNAUTHORIZED) {
-                    warn!("refresh token: {}", err);
-                    store.update_tokens(client_id, client_secret).await?;
-                } else {
-                    bail!(err);
-                }
-            }
-        }
-    }
+    let res = with_token_refresh(store, client_id, client_secret, |token| async move {
+        api::get_chatters(channel_user_id, user_id, &token, client_id).await
+    })
+    .await?;
+    let now = chrono::Local::now().naive_local();
+    println!(
+        "{}",
+        format_chatters_line(now, &res, channel_name, username)
+    );
+    Ok(())
 }
 
 pub async fn chatters(
@@ -128,25 +133,15 @@ pub async fn show_user_info(
     client_secret: &str,
 ) -> anyhow::Result<()> {
     let mut store = Store::new(db_dir, db_name)?;
-    loop {
-        match api::get_user(username, store.access_token(), client_id).await {
-            Ok(channel_user) => {
-                if channel_user.data.is_empty() {
-                    bail!("channel not found");
-                }
-                println!("{:?}", channel_user);
-                break;
-            }
-            Err(err) => {
-                if err.status() == Some(reqwest::StatusCode::UNAUTHORIZED) {
-                    warn!("refresh token: {}", err);
-                    store.update_tokens(client_id, client_secret).await?;
-                } else {
-                    bail!(err);
-                }
-            }
-        };
+    let channel_user =
+        with_token_refresh(&mut store, client_id, client_secret, |token| async move {
+            api::get_user(username, &token, client_id).await
+        })
+        .await?;
+    if channel_user.data.is_empty() {
+        bail!("channel not found");
     }
+    println!("{:?}", channel_user);
     Ok(())
 }
 

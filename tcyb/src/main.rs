@@ -28,9 +28,30 @@ enum Commands {
     AuthCode {},
     BanBots {},
     RefreshToken {},
-    ShowChatters {},
-    ShowUser { username: String },
-    ShowFollowings { username: String },
+    ShowChatters {
+        /// 指定した秒数ごとに取得を繰り返す（省略時は 1 回取得して終了）
+        #[arg(long, value_name = "SECS", value_parser = clap::value_parser!(u64).range(1..))]
+        interval: Option<u64>,
+    },
+    ShowUser {
+        username: String,
+    },
+    ShowFollowings {
+        username: String,
+    },
+}
+
+/// `run` を Ctrl+C 受信まで走らせる。先に完了した方の結果を返す。
+/// Ctrl+C が先に来た場合、`run` は完了を待たずその場でキャンセルされる（HTTP リクエストの途中でも中断されうる）。
+async fn run_until_ctrl_c(run: impl std::future::Future<Output = Result<()>>) -> Result<()> {
+    tokio::select! {
+        res = run => res,
+        sig = tokio::signal::ctrl_c() => {
+            sig?;
+            log::warn!("Ctrl+C received, shutting down");
+            Ok(())
+        }
+    }
 }
 
 #[tokio::main]
@@ -67,13 +88,7 @@ async fn main() -> Result<()> {
 
     match &args.command {
         Some(Commands::ReadChat {}) => {
-            tokio::select! {
-                res = yomiage::yomiage(&settings) => res?,
-                sig = tokio::signal::ctrl_c() => {
-                    sig?;
-                    log::warn!("Ctrl+C received, shutting down");
-                }
-            }
+            run_until_ctrl_c(yomiage::yomiage(&settings)).await?;
         }
         Some(Commands::AuthCode {}) => {
             auth::auth_code_grant(
@@ -103,16 +118,22 @@ async fn main() -> Result<()> {
             )
             .await?;
         }
-        Some(Commands::ShowChatters {}) => {
-            chat::chatters(
+        Some(Commands::ShowChatters { interval }) => {
+            let interval = interval.map(std::time::Duration::from_secs);
+            let run = chat::chatters(
                 &settings.db_dir,
                 &settings.db_name,
                 &settings.channel,
                 &settings.username,
                 &settings.client_id,
                 &settings.client_secret,
-            )
-            .await?;
+                interval,
+            );
+            if interval.is_none() {
+                run.await?;
+            } else {
+                run_until_ctrl_c(run).await?;
+            }
         }
         Some(Commands::ShowUser { username }) => {
             chat::show_user_info(
@@ -137,4 +158,45 @@ async fn main() -> Result<()> {
         None => {}
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_interval(args: &[&str]) -> Option<u64> {
+        match Cli::try_parse_from(args).unwrap().command {
+            Some(Commands::ShowChatters { interval }) => interval,
+            _ => panic!("expected the show-chatters subcommand"),
+        }
+    }
+
+    #[test]
+    fn show_chatters_defaults_to_one_shot() {
+        assert_eq!(parse_interval(&["tcyb", "show-chatters"]), None);
+    }
+
+    #[test]
+    fn show_chatters_takes_interval_in_seconds() {
+        assert_eq!(
+            parse_interval(&["tcyb", "show-chatters", "--interval", "60"]),
+            Some(60)
+        );
+    }
+
+    #[test]
+    fn show_chatters_rejects_zero_interval() {
+        assert!(Cli::try_parse_from(["tcyb", "show-chatters", "--interval", "0"]).is_err());
+    }
+
+    #[test]
+    fn show_chatters_rejects_non_numeric_interval() {
+        assert!(Cli::try_parse_from(["tcyb", "show-chatters", "--interval", "1m"]).is_err());
+    }
+
+    #[test]
+    fn cli_definition_is_internally_consistent() {
+        use clap::CommandFactory;
+        Cli::command().debug_assert();
+    }
 }

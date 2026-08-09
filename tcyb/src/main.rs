@@ -41,6 +41,18 @@ enum Commands {
     },
 }
 
+/// `run` を Ctrl+C 受信まで走らせる。先に完了した方の結果を返す。
+async fn run_until_ctrl_c(run: impl std::future::Future<Output = Result<()>>) -> Result<()> {
+    tokio::select! {
+        res = run => res,
+        sig = tokio::signal::ctrl_c() => {
+            sig?;
+            log::warn!("Ctrl+C received, shutting down");
+            Ok(())
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let _profile = profiling::init();
@@ -75,13 +87,7 @@ async fn main() -> Result<()> {
 
     match &args.command {
         Some(Commands::ReadChat {}) => {
-            tokio::select! {
-                res = yomiage::yomiage(&settings) => res?,
-                sig = tokio::signal::ctrl_c() => {
-                    sig?;
-                    log::warn!("Ctrl+C received, shutting down");
-                }
-            }
+            run_until_ctrl_c(yomiage::yomiage(&settings)).await?;
         }
         Some(Commands::AuthCode {}) => {
             auth::auth_code_grant(
@@ -125,13 +131,7 @@ async fn main() -> Result<()> {
             if interval.is_none() {
                 run.await?;
             } else {
-                tokio::select! {
-                    res = run => res?,
-                    sig = tokio::signal::ctrl_c() => {
-                        sig?;
-                        log::warn!("Ctrl+C received, shutting down");
-                    }
-                }
+                run_until_ctrl_c(run).await?;
             }
         }
         Some(Commands::ShowUser { username }) => {

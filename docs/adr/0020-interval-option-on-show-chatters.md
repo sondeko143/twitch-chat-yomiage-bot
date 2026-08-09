@@ -1,6 +1,6 @@
 # 0020. 周期取得は show-chatters の `--interval` で表し、新サブコマンドも設定キーも作らない
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-08-09
 - Related: [show-chatters 常駐 spec](../superpowers/specs/2026-08-09-tcyb-show-chatters-daemon-design.md), [ADR-0013](0013-config-secret-in-os-standard-user-dir.md), [ADR-0019](0019-foreground-only-daemon-for-show-chatters.md)
 

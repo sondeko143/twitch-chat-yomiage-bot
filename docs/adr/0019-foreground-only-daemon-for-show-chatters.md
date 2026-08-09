@@ -1,6 +1,6 @@
 # 0019. show-chatters の常駐は前面ループに限定し、バックグラウンド化と再起動を OS に委ねる
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-08-09
 - Related: [show-chatters 常駐 spec](../superpowers/specs/2026-08-09-tcyb-show-chatters-daemon-design.md), [ADR-0020](0020-interval-option-on-show-chatters.md)
 

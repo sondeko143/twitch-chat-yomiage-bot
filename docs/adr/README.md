@@ -61,3 +61,4 @@ spec 承認後、plan の手前で毎回判定する。1 つでも該当した�
 | [0019](0019-foreground-only-daemon-for-show-chatters.md) | show-chatters の常駐は前面ループに限定し再起動を OS に委ねる | Accepted | 2026-08-09 | [show-chatters 常駐](../superpowers/specs/2026-08-09-tcyb-show-chatters-daemon-design.md) |
 | [0020](0020-interval-option-on-show-chatters.md) | 周期取得は show-chatters の `--interval` で表し新サブコマンドも設定キーも作らない | Accepted | 2026-08-09 | [show-chatters 常駐](../superpowers/specs/2026-08-09-tcyb-show-chatters-daemon-design.md) |
 | [0021](0021-bound-401-retry-to-a-single-refresh.md) | トークンリフレッシュ後の 401 は再リフレッシュせず常駐を終了する | Accepted | 2026-08-09 | [show-chatters 常駐](../superpowers/specs/2026-08-09-tcyb-show-chatters-daemon-design.md) |
+| [0022](0022-retry-idempotent-gets-once-when-no-response-arrives.md) | 応答が返らなかった Helix の GET は共有クライアント側で 1 回だけ張り直す | Accepted | 2026-08-30 | — |

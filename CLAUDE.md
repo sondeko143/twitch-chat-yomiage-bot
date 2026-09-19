@@ -37,9 +37,7 @@ just check   # fmt-check + clippy + test + check-env-leak（外部ツール監�
 
 ### 保留中の脆弱性 advisory（ignore 登録済み）
 
-以下は執筆時点のスナップショット。advisory-db も依存ツリーも随時変わるため、**現況は必ず `just audit` / `cargo deny check advisories` を再実行して確認する**（記述が残っていても既に解消している場合がある）。
-
-- **quick-xml 0.39.4 の DoS 2件（RUSTSEC-2026-0194 / 0195・高7.5）を [deny.toml](deny.toml) と [.cargo/audit.toml](.cargo/audit.toml) の両方で ID 付き ignore に登録**して `just ci` を通している（両ゲートは別リストなので片方だけだと残り一方が赤）。`wayland-scanner`（build-time proc-macro・Linux/Wayland 専用）経由の推移的依存で、最新の wayland-scanner が依然 `quick-xml ^0.39` を要求（上流未対応）のため更新不可。Windows 標的では非コンパイル・信頼済みローカル XML のみ解析で到達不能と評価。**解除トリガ:** `eframe`/`wayland-scanner` の更新で `quick-xml >= 0.41` へ上げられるようになったら両ファイルから ID を削除し再 audit する。トリアージ手順は skill `triaging-cargo-audit` を参照。
+現在なし（[deny.toml](deny.toml) / [.cargo/audit.toml](.cargo/audit.toml) の `ignore` はどちらも空）。advisory-db も依存ツリーも随時変わるため、**現況は必ず `just audit` / `cargo deny check advisories` を再実行して確認する**。新たに ignore を足す場合は、両ファイルが別リストである（片方だけだと残り一方が赤）点と、解除トリガをここに併記する点に注意。トリアージ手順は skill `triaging-cargo-audit` を参照。
 
 ## 環境メモ
 

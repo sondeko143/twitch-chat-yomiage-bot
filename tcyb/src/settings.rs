@@ -11,11 +11,29 @@ pub struct Settings {
     pub speech_address: String,
     pub operations: Vec<String>,
     pub listen_address: String,
-    pub greeting_template: String,
     pub db_dir: PathBuf,
     pub db_name: String,
     pub translate_command: String,
+    #[serde(default)]
+    pub notification_speech: Vec<NotificationSpeech>,
 }
+
+/// 通知の種別ごとの読み上げテンプレート（`[[notification_speech]]`）。
+#[derive(Debug, Default, Deserialize, PartialEq, Eq, Clone)]
+pub struct NotificationSpeech {
+    #[serde(rename = "type")]
+    pub type_: String,
+    #[serde(default)]
+    pub notice_type: Option<String>,
+    pub template: String,
+}
+
+const LEGACY_GREETING_ERROR: &str = r#"`greeting_template` は廃止されました。設定ファイルと環境変数 `cb_greeting_template` から削除し、次のように書き換えてください。
+
+[[notification_speech]]
+type = "channel.follow"
+template = "{user_name} さん。フォローありがとうございます。"
+"#;
 
 const CONFIG_TEMPLATE: &str = r#"# tcyb 設定ファイル
 client_id = ""
@@ -24,10 +42,15 @@ channel = "your_channel_name"
 username = "your_username"
 speech_address = "http://localhost:8080"
 operations = ["o:/transl?t=ja", "o:/tts?i=1&spd=1.1&pit=-0.05", "o:/play?v=18"]
-greeting_template = "user_name さん。フォローありがとうございます。"
 translate_command = "translate"
 # listen_address = "localhost:8000"   # 既定値あり。変更時のみ記入
 # db_dir / db_name は OS 標準データディレクトリを既定使用（変更時のみ記入）
+
+# 通知の読み上げ。type ごとにテンプレートを書く。{フィールド名} は通知 event の値に置き換わる
+# （ネストは {a.b}、波括弧そのものは {{ と }}）。notice_type は省略可（省略時はその type の全てに一致）
+[[notification_speech]]
+type = "channel.follow"
+template = "{user_name} さん。フォローありがとうございます。"
 "#;
 
 pub fn scaffold_config(config_file: &Path) -> anyhow::Result<()> {
@@ -51,7 +74,6 @@ pub fn load(
 ) -> anyhow::Result<Settings> {
     let mut builder = config::Config::builder()
         .set_default("listen_address", "localhost:8000")?
-        .set_default("greeting_template", "user_name is now following!")?
         .set_default("db_dir", default_db_dir.to_string_lossy().into_owned())?
         .set_default("db_name", "data.json")?;
     builder = builder.add_source(config::File::from(config_file).required(false));
@@ -66,6 +88,9 @@ pub fn load(
         builder = builder.add_source(config::File::with_name(name));
     }
     let cfg = builder.build()?;
+    if cfg.get::<config::Value>("greeting_template").is_ok() {
+        anyhow::bail!(LEGACY_GREETING_ERROR);
+    }
     Ok(cfg.try_deserialize()?)
 }
 
@@ -103,7 +128,7 @@ mod tests {
         std::fs::write(&path, filled).unwrap();
 
         let default_db = std::path::Path::new("/var/tcyb-data");
-        let s = load(&path, None, default_db).unwrap();
+        let s = load_locked(&path, None, default_db).unwrap();
 
         assert_eq!(s.client_id, "testid");
         assert_eq!(s.client_secret, "testsecret");
@@ -141,7 +166,7 @@ translate_command = "translate"
         let cfg = write_config(dir.path(), FULL_CONFIG);
         let default_db = std::path::Path::new("/var/tcyb-data");
 
-        let s = load(&cfg, None, default_db).unwrap();
+        let s = load_locked(&cfg, None, default_db).unwrap();
 
         assert_eq!(s.db_dir, default_db);
         assert_eq!(s.client_secret, "secret");
@@ -153,7 +178,7 @@ translate_command = "translate"
         let body = format!("{}\ndb_dir = \"custom-db\"\n", FULL_CONFIG);
         let cfg = write_config(dir.path(), &body);
 
-        let s = load(&cfg, None, std::path::Path::new("/var/tcyb-data")).unwrap();
+        let s = load_locked(&cfg, None, std::path::Path::new("/var/tcyb-data")).unwrap();
 
         assert_eq!(s.db_dir, std::path::Path::new("custom-db"));
     }
@@ -163,8 +188,113 @@ translate_command = "translate"
         let dir = tempfile::tempdir().unwrap();
         let cfg = write_config(dir.path(), "client_id = \"id\"\n");
 
-        let err = load(&cfg, None, std::path::Path::new("/var/tcyb-data"));
+        let err = load_locked(&cfg, None, std::path::Path::new("/var/tcyb-data"));
 
         assert!(err.is_err());
+    }
+
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// 環境変数を触るテストと直列化して `load` を呼ぶ。
+    fn load_locked(
+        config_file: &Path,
+        cli: Option<&Path>,
+        default_db: &Path,
+    ) -> anyhow::Result<Settings> {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        load(config_file, cli, default_db)
+    }
+
+    #[test]
+    fn load_reads_multiple_notification_speech_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = format!(
+            "{}
+[[notification_speech]]
+type = \"channel.follow\"
+template = \"a\"
+
+[[notification_speech]]
+type = \"channel.chat.notification\"
+notice_type = \"sub\"
+template = \"b\"
+",
+            FULL_CONFIG
+        );
+        let cfg = write_config(dir.path(), &body);
+
+        let s = load_locked(&cfg, None, Path::new("/d")).unwrap();
+
+        assert_eq!(
+            s.notification_speech,
+            vec![
+                NotificationSpeech {
+                    type_: "channel.follow".into(),
+                    notice_type: None,
+                    template: "a".into()
+                },
+                NotificationSpeech {
+                    type_: "channel.chat.notification".into(),
+                    notice_type: Some("sub".into()),
+                    template: "b".into()
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn load_defaults_to_no_notification_speech() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = write_config(dir.path(), FULL_CONFIG);
+        let s = load_locked(&cfg, None, Path::new("/d")).unwrap();
+        assert!(s.notification_speech.is_empty());
+    }
+
+    fn assert_migration_hint(err: &anyhow::Error) {
+        let msg = format!("{err:#}");
+        assert!(msg.contains("greeting_template"), "{msg}");
+        assert!(msg.contains("[[notification_speech]]"), "{msg}");
+        assert!(msg.contains("type = \"channel.follow\""), "{msg}");
+    }
+
+    #[test]
+    fn load_rejects_legacy_greeting_template_in_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = format!(
+            "{}
+greeting_template = \"x\"
+",
+            FULL_CONFIG
+        );
+        let cfg = write_config(dir.path(), &body);
+
+        let err = load_locked(&cfg, None, Path::new("/d")).unwrap_err();
+
+        assert_migration_hint(&err);
+    }
+
+    #[test]
+    fn load_rejects_legacy_greeting_template_in_env() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = write_config(dir.path(), FULL_CONFIG);
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var("cb_greeting_template", "x");
+
+        let res = load(&cfg, None, Path::new("/d"));
+
+        std::env::remove_var("cb_greeting_template");
+        assert_migration_hint(&res.unwrap_err());
+    }
+
+    #[test]
+    fn scaffold_template_has_follow_example_and_no_greeting_template() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        scaffold_config(&path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("greeting_template"));
+        let parsed: toml::Value = toml::from_str(&text).unwrap();
+        let arr = parsed["notification_speech"].as_array().unwrap();
+        assert_eq!(arr[0]["type"].as_str(), Some("channel.follow"));
     }
 }

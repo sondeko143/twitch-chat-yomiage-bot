@@ -1,4 +1,6 @@
 use crate::api::sub_event;
+use crate::notification::render_speech;
+use crate::settings::NotificationSpeech;
 use futures_util::{SinkExt, StreamExt};
 use log::{debug, info, warn};
 use serde::Deserialize;
@@ -27,7 +29,7 @@ pub async fn sub_event_client_loop(
     client_id: String,
     address: String,
     operations: Vec<String>,
-    greeting_template: String,
+    notification_speech: Vec<NotificationSpeech>,
     timeout_sec: u64,
 ) -> Result<(), EventSubError> {
     info!("connect event sub");
@@ -49,7 +51,7 @@ pub async fn sub_event_client_loop(
             &user_id,
             &access_token,
             &client_id,
-            &greeting_template,
+            &notification_speech,
         )
         .await
         {
@@ -94,18 +96,13 @@ struct Metadata {
 #[derive(Deserialize)]
 struct Payload {
     session: Option<Session>,
-    event: Option<Event>,
+    event: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
 struct Session {
     id: String,
     reconnect_url: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct Event {
-    user_name: String,
 }
 
 #[derive(Error, Debug)]
@@ -131,7 +128,7 @@ async fn process_message(
     user_id: &str,
     access_token: &str,
     client_id: &str,
-    greeting_template: &str,
+    notification_speech: &[NotificationSpeech],
 ) -> Result<(), MessageError> {
     if msg.is_ping() {
         debug!("ping");
@@ -166,18 +163,12 @@ async fn process_message(
             "notification" => match event_msg.metadata.subscription_type {
                 Some(s) => match s.as_str() {
                     "channel.follow" => {
-                        let user_name = match event_msg.payload.event {
-                            Some(e) => e.user_name,
-                            None => String::from("Unknown user"),
-                        };
-                        info!("received follow notification {}", user_name);
-                        send_greeting_message_to_speak(
-                            user_name.as_str(),
-                            address,
-                            operations,
-                            greeting_template,
-                        )
-                        .await?;
+                        let event = event_msg.payload.event.unwrap_or(serde_json::Value::Null);
+                        info!("received follow notification {}", event);
+                        if let Some(text) = render_speech(notification_speech, &s, &event) {
+                            vstc::process_command(address, operations, text, None, None, None)
+                                .await?;
+                        }
                         Ok(())
                     }
                     _ => {
@@ -195,15 +186,4 @@ async fn process_message(
     } else {
         Ok(())
     }
-}
-
-async fn send_greeting_message_to_speak(
-    user_name: &str,
-    uri: &str,
-    operations: &[String],
-    text_template: &str,
-) -> Result<(), vstc::VstcError> {
-    let greeting = text_template.replace("user_name", user_name);
-    vstc::process_command(uri, operations, greeting, None, None, None).await?;
-    Ok(())
 }

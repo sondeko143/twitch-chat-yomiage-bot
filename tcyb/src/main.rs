@@ -4,6 +4,7 @@ mod channel;
 mod chat;
 mod eventsub;
 mod irc;
+mod notification;
 mod paths;
 mod profiling;
 mod settings;

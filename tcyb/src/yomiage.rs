@@ -94,7 +94,7 @@ pub async fn yomiage(settings: &Settings) -> anyhow::Result<()> {
             settings.client_id.clone(),
             settings.speech_address.clone(),
             settings.operations.clone(),
-            settings.greeting_template.clone(),
+            settings.notification_speech.clone(),
             EVENT_TIMEOUT_SECS,
         ));
         let chat_abort_handle = chat_t.abort_handle();

@@ -79,6 +79,7 @@ impl FeedHub {
         self.broadcast(FeedMessage::Chatters(chatters));
     }
 
+    #[allow(dead_code)] // 受信側（monitor）の task で使う
     pub fn send_status(&self, status: Status) {
         self.update_status(|s| *s = status);
     }
@@ -105,6 +106,11 @@ impl FeedHub {
                 rx,
             },
         )
+    }
+
+    /// 今いる購読者（受信口）の数。
+    pub fn subscriber_count(&self) -> usize {
+        self.inner.tx.receiver_count()
     }
 
     /// 購読者がいなくても、受信が止まっていても待たない（broadcast は古い未読を上書きする）。

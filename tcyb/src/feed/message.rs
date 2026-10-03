@@ -119,6 +119,7 @@ impl FeedMessage {
     }
 
     /// JSON テキストフレームを解釈する。版が違えば [`FeedDecodeError::Incompatible`]。
+    #[allow(dead_code)] // 受信側（monitor）の task で使う
     pub fn from_json(text: &str) -> Result<Self, FeedDecodeError> {
         #[derive(Deserialize)]
         struct VersionOnly {

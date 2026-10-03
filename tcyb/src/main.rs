@@ -3,9 +3,8 @@ mod auth;
 mod channel;
 mod chat;
 mod eventsub;
-// 配信口（Task 5）と monitor（Task 6）から使うまでは未使用の公開 API がある
-#[allow(dead_code, unused_imports)]
 mod feed;
+mod feed_server;
 mod irc;
 mod notification;
 mod paths;

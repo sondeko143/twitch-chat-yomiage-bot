@@ -88,7 +88,7 @@ async fn resolve_broadcaster_id(store: &mut Store, settings: &Settings) -> anyho
     .await
 }
 
-/// 監視用の処理（ハブ・通知の橋渡し・視聴者一覧の周期取得）。`read-chat` の 1 回の
+/// 監視用の処理（ハブ・配信口・通知の橋渡し・視聴者一覧の周期取得）。`read-chat` の 1 回の
 /// 実行につき 1 度だけ起動し、IRC / EventSub の再接続をまたいで生き続ける。
 ///
 /// 各処理は別タスクで動くので、失敗や panic が読み上げのループへ伝わらない。
@@ -101,7 +101,7 @@ struct Monitor {
 
 impl Monitor {
     /// `monitor.enabled = false` のときは何も起動せず `None`。
-    fn start(
+    async fn start(
         settings: &Settings,
         store: &SharedStore,
         broadcaster_id: &str,
@@ -123,10 +123,15 @@ impl Monitor {
             settings.client_id.clone(),
             settings.client_secret.clone(),
         ));
+        let mut tasks = vec![bridge.abort_handle(), poll.abort_handle()];
+        // bind に失敗しても読み上げは続ける（警告は start が出す）
+        if let Some(server) = crate::feed_server::start(monitor.port, hub.clone()).await {
+            tasks.push(server.abort_handle());
+        }
         Some(Self {
             hub,
             sink,
-            _tasks: AbortOnDrop(vec![bridge.abort_handle(), poll.abort_handle()]),
+            _tasks: AbortOnDrop(tasks),
         })
     }
 }
@@ -189,7 +194,7 @@ pub async fn yomiage(settings: &Settings) -> anyhow::Result<()> {
         .await?;
     let broadcaster_id = resolve_broadcaster_id(&mut *store.lock().await, settings).await?;
     // 再接続のループの外で 1 度だけ起動する（ハブの保持内容を再接続で失わない）
-    let monitor = Monitor::start(settings, &store, &broadcaster_id, &user_id);
+    let monitor = Monitor::start(settings, &store, &broadcaster_id, &user_id).await;
     let hub = monitor.as_ref().map(|m| m.hub.clone());
     loop {
         let access_token = store.lock().await.access_token().to_string();

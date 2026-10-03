@@ -1,6 +1,6 @@
 # 0024. monitor 配信口は axum の WebSocket 上の JSON メッセージで実装する
 
-- Status: Proposed
+- Status: Accepted
 - 効力: 既定
 - Date: 2026-10-03
 - Related: [monitor TUI spec](../superpowers/specs/2026-10-03-tcyb-monitor-tui-design.md), [ADR-0023](0023-separate-monitor-tui-via-local-feed-from-read-chat.md), [ADR-0006](0006-pin-protos-by-tag.md)

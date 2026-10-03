@@ -1,6 +1,6 @@
 # 0026. サブスク等の通知は bot トークンで購読できる channel.chat.notification で受け取る
 
-- Status: Proposed
+- Status: Accepted
 - 効力: 制約
 - Date: 2026-10-03
 - Related: [monitor TUI spec](../superpowers/specs/2026-10-03-tcyb-monitor-tui-design.md), [ADR-0025](0025-unify-notification-speech-templates-by-type.md)

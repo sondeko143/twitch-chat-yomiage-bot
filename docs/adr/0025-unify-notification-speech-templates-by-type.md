@@ -1,6 +1,6 @@
 # 0025. 通知読み上げを種別ごとのテンプレート配列に統一し、greeting_template を廃止する
 
-- Status: Proposed
+- Status: Accepted
 - 効力: 既定
 - Date: 2026-10-03
 - Related: [monitor TUI spec](../superpowers/specs/2026-10-03-tcyb-monitor-tui-design.md), [ADR-0026](0026-receive-sub-events-via-chat-notification.md)

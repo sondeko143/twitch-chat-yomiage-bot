@@ -1,6 +1,6 @@
 # 0023. read-chat にローカル配信口を設け、TUI は別プロセスの閲覧専用クライアントにする
 
-- Status: Proposed
+- Status: Accepted
 - 効力: 既定
 - Date: 2026-10-03
 - Related: [monitor TUI spec](../superpowers/specs/2026-10-03-tcyb-monitor-tui-design.md), [ADR-0020](0020-interval-option-on-show-chatters.md), [ADR-0021](0021-bound-401-retry-to-a-single-refresh.md), [ADR-0024](0024-websocket-json-for-monitor-feed.md)

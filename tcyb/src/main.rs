@@ -6,6 +6,7 @@ mod eventsub;
 mod feed;
 mod feed_server;
 mod irc;
+mod monitor;
 mod notification;
 mod paths;
 mod profiling;

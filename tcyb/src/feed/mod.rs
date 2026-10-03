@@ -13,6 +13,7 @@ pub use message::{ChatLine, Chatter, Chatters, FeedMessage, NotificationLine};
 #[allow(unused_imports)]
 pub use hub::FeedReceiver;
 #[allow(unused_imports)]
-pub use message::{ConnectionState, FeedDecodeError, Snapshot, Status, PROTOCOL_VERSION};
+pub use message::ConnectionState;
+pub use message::{FeedDecodeError, Snapshot, Status, PROTOCOL_VERSION};
 #[allow(unused_imports)]
 pub use summary::summarize;

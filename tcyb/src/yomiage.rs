@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use crate::settings::Settings;
-use crate::store::{Store, StoreError};
+use crate::store::{SharedStore, Store, StoreError};
 use crate::{eventsub::sub_event_client_loop, irc::read_chat_client_loop};
 use anyhow::bail;
 use log::warn;
@@ -63,6 +63,16 @@ async fn refresh_tokens_with_backoff(
     }
 }
 
+/// 共有ストアのロックを取ってからリフレッシュする（視聴者一覧の周期取得と直列化される）。
+async fn refresh_shared_tokens(store: &SharedStore, settings: &Settings) -> anyhow::Result<()> {
+    refresh_tokens_with_backoff(
+        &mut *store.lock().await,
+        &settings.client_id,
+        &settings.client_secret,
+    )
+    .await
+}
+
 /// follow / raid / chat.notification は bot ではなく設定の channel（配信者）が対象。
 async fn resolve_broadcaster_id(store: &mut Store, settings: &Settings) -> anyhow::Result<String> {
     crate::chat::resolve_channel_user_id(
@@ -79,20 +89,26 @@ async fn resolve_broadcaster_id(store: &mut Store, settings: &Settings) -> anyho
 pub async fn yomiage(settings: &Settings) -> anyhow::Result<()> {
     let irc_url = url::Url::parse(IRC_CONNECT_ADDR)?;
     let event_url = url::Url::parse(EVENT_CONNECT_ADDR)?;
-    let mut store = {
+    // トークンの持ち主はここ 1 つ。視聴者一覧の周期取得も同じハンドルを共有する。
+    let store: SharedStore = {
         let _span = tracing::info_span!("store_new").entered();
-        Store::new(&settings.db_dir, &settings.db_name)?
+        std::sync::Arc::new(tokio::sync::Mutex::new(Store::new(
+            &settings.db_dir,
+            &settings.db_name,
+        )?))
     };
     let user_id = store
+        .lock()
+        .await
         .user_id(&settings.username, &settings.client_id)
         .instrument(tracing::info_span!("user_id_fetch"))
         .await?;
-    let broadcaster_id = resolve_broadcaster_id(&mut store, settings).await?;
+    let broadcaster_id = resolve_broadcaster_id(&mut *store.lock().await, settings).await?;
     loop {
-        let access_token = store.access_token();
+        let access_token = store.lock().await.access_token().to_string();
         let chat_t = tokio::spawn(read_chat_client_loop(
             irc_url.clone(),
-            String::from(access_token),
+            access_token.clone(),
             settings.username.clone(),
             settings.channel.clone(),
             settings.speech_address.clone(),
@@ -102,7 +118,7 @@ pub async fn yomiage(settings: &Settings) -> anyhow::Result<()> {
         ));
         let sub_event_t = tokio::spawn(sub_event_client_loop(
             event_url.clone(),
-            String::from(access_token),
+            access_token.clone(),
             broadcaster_id.clone(),
             user_id.clone(),
             settings.client_id.clone(),
@@ -124,12 +140,7 @@ pub async fn yomiage(settings: &Settings) -> anyhow::Result<()> {
                     },
                     Ok(Err(e)) => {
                         warn!("error {}: try to reconnect.", e);
-                        refresh_tokens_with_backoff(
-                            &mut store,
-                            &settings.client_id,
-                            &settings.client_secret,
-                        )
-                        .await?;
+                        refresh_shared_tokens(&store, settings).await?;
                         sub_event_abort_handle.abort();
                     },
                     Err(e) => bail!(e)
@@ -143,12 +154,7 @@ pub async fn yomiage(settings: &Settings) -> anyhow::Result<()> {
                     },
                     Ok(Err(e)) => {
                         warn!("error {}: try to reconnect.", e);
-                        refresh_tokens_with_backoff(
-                            &mut store,
-                            &settings.client_id,
-                            &settings.client_secret,
-                        )
-                        .await?;
+                        refresh_shared_tokens(&store, settings).await?;
                         chat_abort_handle.abort();
                     },
                     Err(e) => bail!(e)

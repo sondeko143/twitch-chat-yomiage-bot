@@ -44,6 +44,11 @@ pub fn save_tokens(
     Ok(())
 }
 
+/// `read-chat` 内でトークンを持つ唯一の主体を、yomiage の再接続処理と視聴者一覧の
+/// 周期取得で共有するためのハンドル。リフレッシュはこの mutex で直列化され、
+/// 片方が更新したトークンはもう片方から即座に見える。
+pub type SharedStore = std::sync::Arc<tokio::sync::Mutex<Store>>;
+
 pub struct Store {
     db: jfs::Store,
     db_name: String,
@@ -77,6 +82,12 @@ impl Store {
 
     pub fn access_token(&self) -> &str {
         self.obj.access_token.as_str()
+    }
+
+    /// 他の主体がトークンを更新した状況をネットワーク無しで再現するためのテスト用。
+    #[cfg(test)]
+    pub fn replace_access_token_for_test(&mut self, access_token: &str) {
+        self.obj.access_token = access_token.to_string();
     }
 
     pub async fn update_tokens(

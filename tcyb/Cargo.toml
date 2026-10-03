@@ -44,4 +44,5 @@ profiling = ["dep:tracing-subscriber", "dep:tracing-chrome", "dep:tracing-flame"
 
 [dev-dependencies]
 tempfile = "3.27.0"
+tokio = { version = "1.28.1", features = ["test-util"] }
 toml = "1.1.2"

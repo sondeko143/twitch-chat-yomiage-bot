@@ -90,6 +90,11 @@ pub struct Status {
     /// 視聴者一覧の直近の失敗理由。
     #[serde(default)]
     pub chatters_last_error: Option<String>,
+    /// 今の EventSub セッションで購読に失敗した種別。新しいセッションで空に戻る。
+    /// 後から足した任意フィールドなので、無ければ空として読み、空なら書き出さない
+    /// （プロトコル版は上げない。ADR-0027）。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub eventsub_failed_subscriptions: Vec<String>,
 }
 
 /// 購読開始時・取りこぼし後に送る現在の状態。`chats` / `notifications` は古い順。
@@ -227,6 +232,7 @@ mod tests {
             eventsub: ConnectionState::Disconnected,
             chatters_last_success: Some(at(4)),
             chatters_last_error: Some("401".into()),
+            eventsub_failed_subscriptions: vec!["channel.chat.notification".into()],
         }
     }
 
@@ -296,6 +302,45 @@ mod tests {
         assert!(matches!(
             FeedMessage::from_json(r#"{"v":1,"kind":"unknown"}"#),
             Err(FeedDecodeError::Malformed(_))
+        ));
+    }
+
+    /// 購読失敗の欄を知らない（追加前の）送信側の status も、版 1 のまま読める。
+    #[test]
+    fn v1_status_without_failed_subscriptions_decodes_as_empty() {
+        let text = r#"{"v":1,"kind":"status","irc":"connected","eventsub":"connecting","chatters_last_success":null,"chatters_last_error":null}"#;
+        let FeedMessage::Status(status) = FeedMessage::from_json(text).unwrap() else {
+            panic!("status として読めるはず");
+        };
+        assert_eq!(status.eventsub, ConnectionState::Connecting);
+        assert!(status.eventsub_failed_subscriptions.is_empty());
+    }
+
+    /// 購読失敗の欄が空なら書き出さない（古い受信側にも余計な欄を見せない）。
+    #[test]
+    fn empty_failed_subscriptions_are_omitted_and_filled_ones_round_trip() {
+        let text = FeedMessage::Status(Status::default()).to_json();
+        assert!(!text.contains("eventsub_failed_subscriptions"), "{text}");
+
+        let text = FeedMessage::Status(status()).to_json();
+        let value: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            value["eventsub_failed_subscriptions"],
+            json!(["channel.chat.notification"])
+        );
+        assert_eq!(
+            FeedMessage::from_json(&text).unwrap(),
+            FeedMessage::Status(status())
+        );
+    }
+
+    /// 知らない欄（将来の任意フィールド）が来ても、版が同じなら読める。
+    #[test]
+    fn unknown_status_fields_are_ignored() {
+        let text = r#"{"v":1,"kind":"status","irc":"connected","eventsub":"connected","future_field":[1]}"#;
+        assert!(matches!(
+            FeedMessage::from_json(text),
+            Ok(FeedMessage::Status(_))
         ));
     }
 

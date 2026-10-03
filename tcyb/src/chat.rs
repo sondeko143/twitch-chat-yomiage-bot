@@ -149,20 +149,153 @@ where
     }
 }
 
+/// 配信チャンネル ID を引くときの試行回数（初回を含む）。
+const CHANNEL_ID_ATTEMPTS: u32 = 3;
+/// 1 回目の再試行までの間隔。以降は倍にする。
+const CHANNEL_ID_RETRY_INITIAL_BACKOFF: Duration = Duration::from_secs(2);
+
+/// 一時的な失敗（通信エラー・5xx）なら間隔を空けて再試行する。4xx と応答の解釈失敗は
+/// 再試行しない（401 のトークン更新は呼び出し側の `with_token_refresh` が担う）。
+async fn retry_transient<T, F, Fut>(mut call: F) -> Result<T, reqwest::Error>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, reqwest::Error>>,
+{
+    let mut attempt = 1;
+    let mut backoff = CHANNEL_ID_RETRY_INITIAL_BACKOFF;
+    loop {
+        match call().await {
+            Ok(value) => return Ok(value),
+            Err(err) if attempt < CHANNEL_ID_ATTEMPTS && is_transient(&err) => {
+                warn!(
+                    "transient error (attempt {}/{}): {}; retry in {}s",
+                    attempt,
+                    CHANNEL_ID_ATTEMPTS,
+                    err,
+                    backoff.as_secs()
+                );
+                tokio::time::sleep(backoff).await;
+                attempt += 1;
+                backoff = backoff.saturating_mul(2);
+            }
+            Err(err) => return Err(err),
+        }
+    }
+}
+
+/// 再試行に値する一時的な失敗か。
+///
+/// 想定する一時的なエラーの種別: connect（接続できない）、timeout（応答が時間内に
+/// 来ない）、request（送出・経路の失敗）、body（本文の受信中の失敗）。5xx も一時的。
+/// decode（応答の解釈失敗）と builder（要求の組み立て失敗）は、繰り返しても直らない。
+fn is_transient(err: &reqwest::Error) -> bool {
+    match err.status() {
+        Some(status) => status.is_server_error(),
+        None => !err.is_decode() && !err.is_builder(),
+    }
+}
+
+/// Get Users を、一時的な失敗（タイムアウトを含む）は再試行しつつ呼ぶ。
+/// 各試行は `api::get_user_from` のタイムアウトで打ち切られる。
+async fn get_user_with_retry(
+    url: &str,
+    login: &str,
+    access_token: &str,
+    client_id: &str,
+) -> Result<api::User, reqwest::Error> {
+    retry_transient(|| {
+        api::get_user_from(url, api::REQUEST_TIMEOUT, login, access_token, client_id)
+    })
+    .await
+}
+
+fn first_user_id(user: api::User) -> anyhow::Result<String> {
+    match user.data.into_iter().next() {
+        Some(user) => Ok(user.id),
+        None => bail!("channel not found"),
+    }
+}
+
+/// 配信チャンネルの ID。設定の `channel` と login が一致するキャッシュがあれば API を
+/// 呼ばずにそれを使い、無ければ Helix で引いてストアへ保存する（ADR-0027）。
 pub(crate) async fn resolve_channel_user_id(
     store: &mut Store,
     channel_name: &str,
     client_id: &str,
     client_secret: &str,
 ) -> anyhow::Result<String> {
+    resolve_channel_user_id_from(
+        api::TWITCH_USERS_API_URL,
+        store,
+        channel_name,
+        client_id,
+        client_secret,
+    )
+    .await
+}
+
+/// [`resolve_channel_user_id`] の Get Users の接続先を差し替えられる版（テスト用の継ぎ目）。
+async fn resolve_channel_user_id_from(
+    users_url: &str,
+    store: &mut Store,
+    channel_name: &str,
+    client_id: &str,
+    client_secret: &str,
+) -> anyhow::Result<String> {
+    if let Some(id) = store.cached_channel_id(channel_name) {
+        return Ok(id.to_string());
+    }
     let channel_user = with_token_refresh(store, client_id, client_secret, |token| async move {
-        api::get_user(channel_name, &token, client_id).await
+        get_user_with_retry(users_url, channel_name, &token, client_id).await
     })
     .await?;
-    if channel_user.data.is_empty() {
-        bail!("channel not found");
+    let id = first_user_id(channel_user)?;
+    store.save_channel_id(channel_name, &id)?;
+    Ok(id)
+}
+
+/// [`resolve_channel_user_id`] の共有ストア版。Helix の呼び出し（再試行の待ちを含む）の
+/// 間はストアのロックを持たない。
+pub(crate) async fn resolve_shared_channel_user_id(
+    store: &SharedStore,
+    channel_name: &str,
+    client_id: &str,
+    client_secret: &str,
+) -> anyhow::Result<String> {
+    resolve_shared_channel_user_id_from(
+        api::TWITCH_USERS_API_URL,
+        store,
+        channel_name,
+        client_id,
+        client_secret,
+    )
+    .await
+}
+
+/// [`resolve_shared_channel_user_id`] の Get Users の接続先を差し替えられる版（テスト用の継ぎ目）。
+async fn resolve_shared_channel_user_id_from(
+    users_url: &str,
+    store: &SharedStore,
+    channel_name: &str,
+    client_id: &str,
+    client_secret: &str,
+) -> anyhow::Result<String> {
+    let cached = store
+        .lock()
+        .await
+        .cached_channel_id(channel_name)
+        .map(str::to_string);
+    if let Some(id) = cached {
+        return Ok(id);
     }
-    Ok(channel_user.data[0].id.clone())
+    let channel_user =
+        with_shared_token_refresh(store, client_id, client_secret, |token| async move {
+            get_user_with_retry(users_url, channel_name, &token, client_id).await
+        })
+        .await?;
+    let id = first_user_id(channel_user)?;
+    store.lock().await.save_channel_id(channel_name, &id)?;
+    Ok(id)
 }
 
 async fn chatters_tick(
@@ -255,7 +388,10 @@ pub async fn show_user_info(
 
 #[cfg(test)]
 mod tests {
-    use super::{format_chatters_line, poll_chatters, with_shared_token_refresh};
+    use super::{
+        format_chatters_line, get_user_with_retry, poll_chatters, resolve_channel_user_id_from,
+        resolve_shared_channel_user_id_from, retry_transient, with_shared_token_refresh,
+    };
     use crate::api::{Chatter, Chatters};
     use crate::feed::{self, FeedHub};
     use crate::store::{SharedStore, Store};
@@ -483,6 +619,194 @@ mod tests {
         // Twitch へのリフレッシュ（ネットワーク）に行かず、更新済みトークンで成功する。
         out.expect("更新済みトークンで再試行して成功するはず");
         assert_eq!(*used.lock().unwrap(), ["old", "new"]);
+    }
+
+    /// `status` の HTTP 応答から作った reqwest のエラー。
+    fn http_error(status: u16) -> reqwest::Error {
+        reqwest::Response::from(
+            axum::http::Response::builder()
+                .status(status)
+                .body(String::new())
+                .unwrap(),
+        )
+        .error_for_status()
+        .unwrap_err()
+    }
+
+    /// 呼ばれた回数を数えつつ、`results` を順に返す呼び出し。尽きたら Ok(0)。
+    fn scripted_call(
+        results: Vec<Result<u32, reqwest::Error>>,
+        calls: Arc<AtomicUsize>,
+    ) -> impl FnMut() -> std::future::Ready<Result<u32, reqwest::Error>> {
+        let mut results = results.into_iter();
+        move || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            std::future::ready(results.next().unwrap_or(Ok(0)))
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn transient_server_errors_are_retried_with_spacing() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let start = tokio::time::Instant::now();
+
+        let got = retry_transient(scripted_call(
+            vec![Err(http_error(503)), Err(http_error(500)), Ok(7)],
+            Arc::clone(&calls),
+        ))
+        .await;
+
+        assert_eq!(got.unwrap(), 7);
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        assert!(
+            start.elapsed() >= Duration::from_secs(2 + 4),
+            "間隔を空けて再試行するはず: {:?}",
+            start.elapsed()
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn gives_up_after_three_attempts() {
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        let got = retry_transient(scripted_call(
+            vec![
+                Err(http_error(502)),
+                Err(http_error(502)),
+                Err(http_error(502)),
+                Ok(1),
+            ],
+            Arc::clone(&calls),
+        ))
+        .await;
+
+        assert_eq!(got.unwrap_err().status().map(|s| s.as_u16()), Some(502));
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn client_errors_are_not_retried() {
+        for status in [400, 401, 403, 404] {
+            let calls = Arc::new(AtomicUsize::new(0));
+            let got = retry_transient(scripted_call(
+                vec![Err(http_error(status)), Ok(1)],
+                Arc::clone(&calls),
+            ))
+            .await;
+            assert_eq!(got.unwrap_err().status().map(|s| s.as_u16()), Some(status));
+            assert_eq!(calls.load(Ordering::SeqCst), 1, "{status}");
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn malformed_bodies_are_not_retried() {
+        let decode_error = reqwest::Response::from(
+            axum::http::Response::builder()
+                .status(200)
+                .body("not json".to_string())
+                .unwrap(),
+        )
+        .json::<serde_json::Value>()
+        .await
+        .unwrap_err();
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        let got = retry_transient(scripted_call(
+            vec![Err(decode_error), Ok(1)],
+            Arc::clone(&calls),
+        ))
+        .await;
+
+        assert!(got.unwrap_err().is_decode());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    /// 応答を返さずに接続を切るサーバ。通信エラー（応答なし）を起こす。
+    async fn serve_hang_up() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut conn, _)) = listener.accept().await {
+                let mut buf = [0u8; 1024];
+                let _ = conn.read(&mut buf).await;
+                drop(conn);
+            }
+        });
+        format!("http://{addr}/")
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn network_errors_are_retried() {
+        let url = serve_hang_up().await;
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        let got = retry_transient(|| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            let url = url.clone();
+            async move { reqwest::get(url).await.map(|_| ()) }
+        })
+        .await;
+
+        let err = got.unwrap_err();
+        assert_eq!(err.status(), None, "{err}");
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+    }
+
+    /// 受け付けるだけで応答しないサーバ。受け付けた接続数を数える。
+    async fn serve_never_respond() -> (String, Arc<AtomicUsize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let accepted = Arc::new(AtomicUsize::new(0));
+        tokio::spawn({
+            let accepted = Arc::clone(&accepted);
+            async move {
+                let mut held = Vec::new();
+                while let Ok((conn, _)) = listener.accept().await {
+                    accepted.fetch_add(1, Ordering::SeqCst);
+                    held.push(conn);
+                }
+            }
+        });
+        (format!("http://{addr}/"), accepted)
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn get_user_timeouts_are_retried_within_three_attempts() {
+        let (url, accepted) = serve_never_respond().await;
+
+        let got = get_user_with_retry(&url, "login", "tok", "cid").await;
+
+        let err = got.unwrap_err();
+        assert!(err.is_timeout(), "{err:?}");
+        assert_eq!(accepted.load(Ordering::SeqCst), 3);
+    }
+
+    /// キャッシュがあれば Helix を呼ばない。回帰してもループバックの閉じたポートへ向かう
+    /// だけで、外部へは出ない（再試行の待ちは仮想時間で即座に進む）。
+    #[tokio::test(start_paused = true)]
+    async fn cached_channel_id_is_used_without_calling_the_api() {
+        // 何も待ち受けていないループバックのポート。到達すれば接続拒否になる。
+        let unreachable = "http://127.0.0.1:1/";
+        let dir = tempfile::tempdir().unwrap();
+        let store = shared_store(dir.path());
+        store.lock().await.save_channel_id("mychan", "C1").unwrap();
+
+        let shared =
+            resolve_shared_channel_user_id_from(unreachable, &store, "MyChan", "cid", "secret")
+                .await
+                .unwrap();
+        let owned = resolve_channel_user_id_from(
+            unreachable,
+            &mut *store.lock().await,
+            "mychan",
+            "cid",
+            "secret",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(shared, "C1");
+        assert_eq!(owned, "C1");
     }
 
     #[tokio::test]

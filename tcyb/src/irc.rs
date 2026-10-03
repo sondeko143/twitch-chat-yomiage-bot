@@ -54,10 +54,8 @@ pub async fn read_chat_client_loop(
         .hub
         .clone()
         .map(|hub| LinkStatus::connecting(hub, Link::Irc));
+    // connected にするのはログイン完了の応答（001）を受けたとき（process_message）
     let mut ws_stream = connect_and_authorize(&url, &access_token, &username, &channel).await?;
-    if let Some(status) = &status {
-        status.connected();
-    }
     crate::profiling::mark_ready(crate::profiling::Component::Irc);
     let idle_timeout = std::time::Duration::from_secs(timeout_sec);
     let mut ping_interval =
@@ -84,6 +82,7 @@ pub async fn read_chat_client_loop(
                             &outputs,
                             &username,
                             &channel,
+                            status.as_ref(),
                         )
                         .await
                         {
@@ -182,6 +181,7 @@ async fn process_message(
     outputs: &ChatOutputs,
     username: &str,
     channel: &str,
+    status: Option<&LinkStatus>,
 ) -> Result<(), MessageError> {
     if msg.is_text() || msg.is_binary() {
         let msg_str = msg.into_text()?;
@@ -257,6 +257,13 @@ async fn process_message(
                 }
             }
             IrcMessageKind::LoginFailed => Err(MessageError::LoginFailed),
+            IrcMessageKind::Welcome => {
+                info!("{}", msg_str);
+                if let Some(status) = status {
+                    status.connected();
+                }
+                Ok(())
+            }
             IrcMessageKind::Ping => {
                 info!("respond to ping");
                 ws_stream
@@ -395,6 +402,8 @@ fn translated_reply_body(translated_stdout: &str, emote_suffix: &str) -> Option<
 enum IrcMessageKind {
     Chat,
     LoginFailed,
+    /// ログイン完了の応答（数値応答 `001`）。
+    Welcome,
     Ping,
     #[default]
     Unknown,
@@ -427,6 +436,8 @@ fn parse_message(msg_str: &str) -> IrcMessage {
         .unwrap();
         static ref LOGIN_FAILED_PTN: Regex =
             Regex::new(r":tmi\.twitch\.tv NOTICE \* :Login authentication failed\s*").unwrap();
+        // 1 フレームに複数行が入るので、どの行の先頭でもよい
+        static ref WELCOME_PTN: Regex = Regex::new(r"(?m)^:tmi\.twitch\.tv 001 ").unwrap();
         static ref PING_PTN: Regex = Regex::new(r"PING :tmi\.twitch\.tv").unwrap();
     }
     if CHAT_MSG_PTN.is_match(msg_str) {
@@ -448,6 +459,11 @@ fn parse_message(msg_str: &str) -> IrcMessage {
     } else if LOGIN_FAILED_PTN.is_match(msg_str) {
         return IrcMessage {
             kind: IrcMessageKind::LoginFailed,
+            ..Default::default()
+        };
+    } else if WELCOME_PTN.is_match(msg_str) {
+        return IrcMessage {
+            kind: IrcMessageKind::Welcome,
             ..Default::default()
         };
     } else if PING_PTN.is_match(msg_str) {
@@ -564,6 +580,40 @@ mod tests {
     }
 
     #[test]
+    fn parse_message_recognizes_login_welcome() {
+        let message = parse_message(":tmi.twitch.tv 001 bot :Welcome, GLHF!");
+        assert!(matches!(message.kind, IrcMessageKind::Welcome));
+    }
+
+    /// Twitch はログイン完了の応答（001〜004, 375, 372, 376）を 1 フレームにまとめて送る。
+    #[test]
+    fn parse_message_recognizes_welcome_inside_a_multi_line_frame() {
+        let message = parse_message(
+            ":tmi.twitch.tv 001 bot :Welcome, GLHF!\r\n:tmi.twitch.tv 002 bot :Your host is tmi.twitch.tv\r\n:tmi.twitch.tv 376 bot :>\r\n",
+        );
+        assert!(matches!(message.kind, IrcMessageKind::Welcome));
+    }
+
+    #[test]
+    fn parse_message_does_not_take_other_numerics_or_failures_as_welcome() {
+        for text in [
+            ":tmi.twitch.tv 002 bot :Your host is tmi.twitch.tv",
+            ":tmi.twitch.tv 376 bot :>",
+            ":bot!bot@bot.tmi.twitch.tv JOIN #chan",
+            "@id=x :u!u@u.tmi.twitch.tv PRIVMSG #chan :tmi.twitch.tv 001 bot",
+        ] {
+            assert!(
+                !matches!(parse_message(text).kind, IrcMessageKind::Welcome),
+                "{text}"
+            );
+        }
+        assert!(matches!(
+            parse_message(":tmi.twitch.tv NOTICE * :Login authentication failed").kind,
+            IrcMessageKind::LoginFailed
+        ));
+    }
+
+    #[test]
     fn chat_line_is_none_for_non_chat_messages() {
         let at = chrono::DateTime::from_timestamp(10, 0).unwrap();
         assert_eq!(chat_line(&parse_message("PING :tmi.twitch.tv"), at), None);
@@ -589,13 +639,27 @@ mod tests {
         assert_eq!(stalled.subscribe().0.chats.len(), 5);
     }
 
+    /// `hub` の IRC 状態が `want` になるまで待つ（上限 5 秒）。
+    async fn wait_irc_state(hub: &FeedHub, want: crate::feed::ConnectionState) {
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while hub.subscribe().0.status.irc != want {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("IRC の状態が {want:?} にならない"));
+    }
+
     /// ローカルの IRC 風 WebSocket サーバに繋ぎ、接続状態とチャットがハブに反映される。
+    /// WebSocket が繋がっただけでは `connecting` のままで、ログイン完了の応答（001）を
+    /// 受けて初めて `connected` になる。
     #[tokio::test]
     async fn read_chat_loop_reports_status_and_chat_to_hub() {
         use crate::feed::ConnectionState;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        let (connected_tx, connected_rx) = tokio::sync::oneshot::channel::<()>();
+        let (authorized_tx, authorized_rx) = tokio::sync::oneshot::channel::<()>();
+        let (welcome_tx, welcome_rx) = tokio::sync::oneshot::channel::<()>();
         let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
         let server = tokio::spawn(async move {
             let (tcp, _) = listener.accept().await.unwrap();
@@ -604,7 +668,14 @@ mod tests {
             for _ in 0..4 {
                 ws.next().await.unwrap().unwrap();
             }
-            connected_tx.send(()).unwrap();
+            authorized_tx.send(()).unwrap();
+            welcome_rx.await.unwrap();
+            ws.send(Message::Text(
+                ":tmi.twitch.tv 001 bot :Welcome, GLHF!\r\n:tmi.twitch.tv 002 bot :Your host is tmi.twitch.tv\r\n"
+                    .into(),
+            ))
+            .await
+            .unwrap();
             release_rx.await.unwrap();
             ws.send(Message::Text(
                 "@color=#00FF00;display-name=Hanako;id=x :hanako!h@h.tmi.twitch.tv PRIVMSG #chan :yo"
@@ -632,9 +703,13 @@ mod tests {
             30,
         ));
 
-        connected_rx.await.unwrap();
-        let (snap, _) = hub.subscribe();
-        assert_eq!(snap.status.irc, ConnectionState::Connected);
+        authorized_rx.await.unwrap();
+        // 認証の送信を終えても、応答が来るまでは接続済みとみなさない
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert_eq!(hub.subscribe().0.status.irc, ConnectionState::Connecting);
+
+        welcome_tx.send(()).unwrap();
+        wait_irc_state(&hub, ConnectionState::Connected).await;
 
         release_tx.send(()).unwrap();
         tokio::time::timeout(std::time::Duration::from_secs(10), client)

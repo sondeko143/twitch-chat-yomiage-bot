@@ -18,6 +18,13 @@ pub struct DBStore {
     pub access_token: String,
     pub refresh_token: String,
     pub user_id: String,
+    /// `channel_id` を引いたときの配信チャンネルの login（小文字）。後から足した項目なので、
+    /// 無いストアファイルは「未保存」として読む（ADR-0027）。
+    #[serde(default)]
+    pub channel_login: String,
+    /// 配信チャンネルのユーザ ID。空なら未保存。
+    #[serde(default)]
+    pub channel_id: String,
 }
 
 /// Persist freshly obtained tokens, creating the store on first use
@@ -100,7 +107,7 @@ impl Store {
         let updated_obj = DBStore {
             access_token,
             refresh_token,
-            user_id: self.obj.user_id.clone(),
+            ..self.obj.clone()
         };
         self.db.save_with_id(&updated_obj, &self.db_name)?;
         self.obj = self.db.get::<DBStore>(&self.db_name)?;
@@ -116,14 +123,37 @@ impl Store {
             let my_user_id = &my_user.data[0].id;
             let new_user_id = my_user_id.clone();
             let updated_obj = DBStore {
-                access_token: self.obj.access_token.clone(),
-                refresh_token: self.obj.refresh_token.clone(),
                 user_id: new_user_id,
+                ..self.obj.clone()
             };
             self.db.save_with_id(&updated_obj, &self.db_name)?;
             self.obj = self.db.get::<DBStore>(&self.db_name)?;
         }
         Ok(self.obj.user_id.clone())
+    }
+
+    /// 保存済みの配信チャンネル ID。保存したときの login が `channel_login` と一致する
+    /// ときだけ返す。Twitch の login は大文字小文字を区別しないので、比較もそうする。
+    pub fn cached_channel_id(&self, channel_login: &str) -> Option<&str> {
+        let cached = !self.obj.channel_id.is_empty()
+            && self.obj.channel_login.eq_ignore_ascii_case(channel_login);
+        cached.then_some(self.obj.channel_id.as_str())
+    }
+
+    /// 配信チャンネルの login と ID の組を保存する（前の組は上書き）。login は小文字で持つ。
+    pub fn save_channel_id(
+        &mut self,
+        channel_login: &str,
+        channel_id: &str,
+    ) -> Result<(), std::io::Error> {
+        let updated_obj = DBStore {
+            channel_login: channel_login.to_ascii_lowercase(),
+            channel_id: channel_id.to_string(),
+            ..self.obj.clone()
+        };
+        self.db.save_with_id(&updated_obj, &self.db_name)?;
+        self.obj = self.db.get::<DBStore>(&self.db_name)?;
+        Ok(())
     }
 }
 
@@ -177,6 +207,7 @@ mod tests {
                 access_token: "old".into(),
                 refresh_token: "oldr".into(),
                 user_id: "U123".into(),
+                ..DBStore::default()
             },
             "data.json",
         )
@@ -191,5 +222,81 @@ mod tests {
         assert_eq!(saved.access_token, "new");
         assert_eq!(saved.refresh_token, "newr");
         assert_eq!(saved.user_id, "U123"); // preserved across re-auth
+    }
+
+    /// チャンネル ID のキャッシュ項目を足す前に書かれたストアファイル。
+    fn write_legacy_store(dir: &Path) {
+        std::fs::write(
+            dir.join("data.json"),
+            r#"{"access_token":"acc","refresh_token":"ref","user_id":"U1"}"#,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn legacy_store_without_channel_fields_loads_as_not_cached() {
+        let dir = tempfile::tempdir().unwrap();
+        write_legacy_store(dir.path());
+
+        let store = Store::new(dir.path(), "data.json").unwrap();
+
+        assert_eq!(store.access_token(), "acc");
+        assert_eq!(store.cached_channel_id("chan"), None);
+        assert_eq!(store.cached_channel_id(""), None);
+    }
+
+    #[test]
+    fn saved_channel_id_is_reused_only_for_the_same_login_and_persists() {
+        let dir = tempfile::tempdir().unwrap();
+        write_legacy_store(dir.path());
+        let mut store = Store::new(dir.path(), "data.json").unwrap();
+
+        store.save_channel_id("MyChan", "C1").unwrap();
+
+        // Twitch の login は大文字小文字を区別しない（正規形は小文字）
+        assert_eq!(store.cached_channel_id("mychan"), Some("C1"));
+        assert_eq!(store.cached_channel_id("MYCHAN"), Some("C1"));
+        assert_eq!(store.cached_channel_id("other"), None);
+
+        let reopened = Store::new(dir.path(), "data.json").unwrap();
+        assert_eq!(reopened.cached_channel_id("mychan"), Some("C1"));
+        // トークンと bot の user_id は保ったまま
+        assert_eq!(reopened.access_token(), "acc");
+        let saved = jfs::Store::new(dir.path())
+            .unwrap()
+            .get::<DBStore>("data.json")
+            .unwrap();
+        assert_eq!(saved.refresh_token, "ref");
+        assert_eq!(saved.user_id, "U1");
+        assert_eq!(saved.channel_login, "mychan");
+    }
+
+    #[test]
+    fn another_channel_overwrites_the_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        write_legacy_store(dir.path());
+        let mut store = Store::new(dir.path(), "data.json").unwrap();
+
+        store.save_channel_id("first", "C1").unwrap();
+        store.save_channel_id("second", "C2").unwrap();
+
+        assert_eq!(store.cached_channel_id("first"), None);
+        assert_eq!(store.cached_channel_id("second"), Some("C2"));
+    }
+
+    #[test]
+    fn save_tokens_preserves_the_channel_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        write_legacy_store(dir.path());
+        Store::new(dir.path(), "data.json")
+            .unwrap()
+            .save_channel_id("chan", "C1")
+            .unwrap();
+
+        save_tokens(dir.path(), "data.json", "new".into(), "newr".into()).unwrap();
+
+        let store = Store::new(dir.path(), "data.json").unwrap();
+        assert_eq!(store.access_token(), "new");
+        assert_eq!(store.cached_channel_id("chan"), Some("C1"));
     }
 }

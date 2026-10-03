@@ -77,8 +77,11 @@ async fn refresh_shared_tokens(store: &SharedStore, settings: &Settings) -> anyh
 }
 
 /// follow / raid / chat.notification は bot ではなく設定の channel（配信者）が対象。
-async fn resolve_broadcaster_id(store: &mut Store, settings: &Settings) -> anyhow::Result<String> {
-    crate::chat::resolve_channel_user_id(
+async fn resolve_broadcaster_id(
+    store: &SharedStore,
+    settings: &Settings,
+) -> anyhow::Result<String> {
+    crate::chat::resolve_shared_channel_user_id(
         store,
         &settings.channel,
         &settings.client_id,
@@ -192,7 +195,7 @@ pub async fn yomiage(settings: &Settings) -> anyhow::Result<()> {
         .user_id(&settings.username, &settings.client_id)
         .instrument(tracing::info_span!("user_id_fetch"))
         .await?;
-    let broadcaster_id = resolve_broadcaster_id(&mut *store.lock().await, settings).await?;
+    let broadcaster_id = resolve_broadcaster_id(&store, settings).await?;
     // 再接続のループの外で 1 度だけ起動する（ハブの保持内容を再接続で失わない）
     let monitor = Monitor::start(settings, &store, &broadcaster_id, &user_id).await;
     let hub = monitor.as_ref().map(|m| m.hub.clone());

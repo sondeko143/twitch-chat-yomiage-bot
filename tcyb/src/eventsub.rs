@@ -58,9 +58,7 @@ pub async fn sub_event_client_loop(
     let (mut ws_stream, _) = connect_async(url.as_str())
         .instrument(tracing::info_span!("event_connect"))
         .await?;
-    if let Some(status) = &status {
-        status.connected();
-    }
+    // connected にするのは session_welcome を受けて購読処理を終えたとき
     while let Ok(Some(msg)) = tokio::time::timeout(
         std::time::Duration::from_secs(timeout_sec),
         ws_stream.next(),
@@ -68,7 +66,7 @@ pub async fn sub_event_client_loop(
     .await
     {
         let msg = msg?;
-        if let Err(e) = process_message(
+        let processed = process_message(
             &mut ws_stream,
             msg,
             &address,
@@ -80,9 +78,15 @@ pub async fn sub_event_client_loop(
             &notification_speech,
             sink.as_ref(),
         )
-        .await
-        {
-            match e {
+        .await;
+        match processed {
+            Ok(Some(failed_subscriptions)) => {
+                if let Some(status) = &status {
+                    status.subscribed(failed_subscriptions);
+                }
+            }
+            Ok(None) => {}
+            Err(e) => match e {
                 MessageError::SessionReconnect { reconnect_url } => {
                     warn!("session reconnect {}: try to reconnect.", reconnect_url);
                     return Err(EventSubError::SessionReconnect { reconnect_url });
@@ -102,7 +106,7 @@ pub async fn sub_event_client_loop(
                 MessageError::VstcError(e) => {
                     warn!("vstc error {}: ignore it.", e);
                 }
-            }
+            },
         }
     }
     Ok(())
@@ -152,6 +156,8 @@ impl From<tokio_tungstenite::tungstenite::Error> for MessageError {
     }
 }
 
+/// 1 件のメッセージを処理する。`session_welcome` で購読処理を終えたときだけ、
+/// 購読に失敗した種別を `Some` で返す。
 #[allow(clippy::too_many_arguments)]
 async fn process_message(
     ws_stream: &mut WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
@@ -164,13 +170,13 @@ async fn process_message(
     client_id: &str,
     notification_speech: &[NotificationSpeech],
     sink: Option<&NotificationSink>,
-) -> Result<(), MessageError> {
+) -> Result<Option<Vec<String>>, MessageError> {
     if msg.is_ping() {
         debug!("ping");
         let data = msg.into_data();
         let item = Message::Pong(data);
         ws_stream.send(item).await?;
-        Ok(())
+        Ok(None)
     } else if msg.is_text() || msg.is_binary() {
         let msg_str = msg.into_text()?;
         let event_msg: EventSubMessage = serde_json::from_str(&msg_str)?;
@@ -181,7 +187,7 @@ async fn process_message(
                     None => String::from(""),
                 };
                 info!("session welcome {}", session_id);
-                subscribe_all(
+                let failed = subscribe_all(
                     broadcaster_id,
                     user_id,
                     session_id.as_str(),
@@ -191,7 +197,7 @@ async fn process_message(
                 .instrument(tracing::info_span!("event_subscribe"))
                 .await?;
                 crate::profiling::mark_ready(crate::profiling::Component::Event);
-                Ok(())
+                Ok(Some(failed))
             }
             "session_reconnect" => {
                 let reconnect_url = match event_msg.payload.session {
@@ -205,7 +211,7 @@ async fn process_message(
                 let Some((notification, text)) =
                     interpret_notification(event_msg, notification_speech)
                 else {
-                    return Ok(());
+                    return Ok(None);
                 };
                 info!(
                     "received {} notification {}",
@@ -218,37 +224,57 @@ async fn process_message(
                 if let Some(text) = text {
                     vstc::process_command(address, operations, text, None, None, None).await?;
                 }
-                Ok(())
+                Ok(None)
             }
             _ => {
                 debug!("received {}", msg_str);
-                Ok(())
+                Ok(None)
             }
         }
     } else {
-        Ok(())
+        Ok(None)
     }
 }
 
-/// 購読を全種別について試みる。失敗した種別はログに出して他を続ける。
-/// 401 だけは、トークン更新つきの再接続で自己回復させるためエラーとして返す。
+/// 購読を全種別について試み、失敗した種別を返す。失敗しても他の種別は続ける。
 async fn subscribe_all(
     broadcaster_id: &str,
     user_id: &str,
     session_id: &str,
     access_token: &str,
     client_id: &str,
-) -> Result<(), reqwest::Error> {
-    let mut unauthorized = None;
+) -> Result<Vec<String>, reqwest::Error> {
+    let mut results = Vec::new();
     for sub in desired_subscriptions(broadcaster_id, user_id, session_id) {
-        if let Err(e) = sub_event(&sub, access_token, client_id).await {
-            warn!("failed to subscribe {}: {}", sub.type_, e);
-            if e.status() == Some(reqwest::StatusCode::UNAUTHORIZED) {
-                unauthorized.get_or_insert(e);
-            }
+        let res = sub_event(&sub, access_token, client_id).await.map(drop);
+        results.push((sub.type_, res));
+    }
+    failed_subscriptions(results)
+}
+
+/// 種別ごとの購読結果から、失敗した種別を集める。失敗はログに出す。
+/// 409（同じ購読が既にある）は購読できているので失敗に数えない。
+/// 401 だけは、トークン更新つきの再接続で自己回復させるためエラーとして返す。
+fn failed_subscriptions(
+    results: Vec<(&str, Result<(), reqwest::Error>)>,
+) -> Result<Vec<String>, reqwest::Error> {
+    let mut failed = Vec::new();
+    let mut unauthorized = None;
+    for (type_, res) in results {
+        let Err(e) = res else {
+            continue;
+        };
+        if e.status() == Some(reqwest::StatusCode::CONFLICT) {
+            info!("already subscribed {}: {}", type_, e);
+            continue;
+        }
+        warn!("failed to subscribe {}: {}", type_, e);
+        failed.push(type_.to_string());
+        if e.status() == Some(reqwest::StatusCode::UNAUTHORIZED) {
+            unauthorized.get_or_insert(e);
         }
     }
-    unauthorized.map_or(Ok(()), Err)
+    unauthorized.map_or(Ok(failed), Err)
 }
 
 /// 通知メッセージから、外へ渡す通知と読み上げ文（テンプレートが一致したときだけ）を作る。
@@ -351,6 +377,97 @@ mod tests {
         assert_eq!(n.subscription_type, "channel.cheer");
         assert_eq!(n.event, event);
         assert_eq!(text, None);
+    }
+
+    /// `status` の HTTP 応答から作った reqwest のエラー。
+    fn http_error(status: u16) -> reqwest::Error {
+        reqwest::Response::from(
+            axum::http::Response::builder()
+                .status(status)
+                .body(String::new())
+                .unwrap(),
+        )
+        .error_for_status()
+        .unwrap_err()
+    }
+
+    #[test]
+    fn failed_subscription_types_are_collected_and_the_rest_continue() {
+        let failed = failed_subscriptions(vec![
+            ("channel.follow", Err(http_error(403))),
+            ("channel.raid", Ok(())),
+            ("channel.chat.notification", Err(http_error(500))),
+        ]);
+        assert_eq!(
+            failed.unwrap(),
+            ["channel.follow", "channel.chat.notification"]
+        );
+    }
+
+    /// 409 は同じ購読が既にあるという応答で、購読はできている。
+    #[test]
+    fn already_subscribed_is_not_a_failure() {
+        let failed = failed_subscriptions(vec![("channel.raid", Err(http_error(409)))]);
+        assert!(failed.unwrap().is_empty());
+    }
+
+    /// 401 はトークン更新つきの再接続で直すため、エラーとして返す。
+    #[test]
+    fn unauthorized_is_returned_as_an_error() {
+        let failed = failed_subscriptions(vec![
+            ("channel.follow", Err(http_error(403))),
+            ("channel.raid", Err(http_error(401))),
+        ]);
+        assert_eq!(
+            failed.unwrap_err().status(),
+            Some(reqwest::StatusCode::UNAUTHORIZED)
+        );
+    }
+
+    /// WebSocket が繋がっただけでは `connecting` のまま。`session_welcome` と購読を
+    /// 終えるまで `connected` にしない。
+    #[tokio::test]
+    async fn stays_connecting_until_session_welcome() {
+        use crate::feed::{ConnectionState, FeedHub, Link};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (accepted_tx, accepted_rx) = tokio::sync::oneshot::channel::<()>();
+        let server = tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+            accepted_tx.send(()).unwrap();
+            // 何も送らず、クライアントが閉じるまで待つ
+            while let Some(Ok(_)) = ws.next().await {}
+        });
+        let hub = FeedHub::new(1);
+        let client = tokio::spawn(sub_event_client_loop(
+            Url::parse(&format!("ws://{addr}")).unwrap(),
+            "token".into(),
+            "b1".into(),
+            "u1".into(),
+            "cid".into(),
+            "http://127.0.0.1:1".into(),
+            Vec::new(),
+            Vec::new(),
+            30,
+            None,
+            Some(LinkStatus::connecting(hub.clone(), Link::EventSub)),
+        ));
+
+        accepted_rx.await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert_eq!(
+            hub.subscribe().0.status.eventsub,
+            ConnectionState::Connecting
+        );
+
+        client.abort();
+        let _ = client.await;
+        assert_eq!(
+            hub.subscribe().0.status.eventsub,
+            ConnectionState::Disconnected
+        );
+        server.abort();
     }
 
     #[test]

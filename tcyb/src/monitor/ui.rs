@@ -177,6 +177,15 @@ fn status_line(state: &MonitorState) -> Line<'static> {
     spans.push(connection_span(known.map(|s| s.irc)));
     spans.push(Span::raw(format!("{SEPARATOR}EventSub: ")));
     spans.push(connection_span(known.map(|s| s.eventsub)));
+    if let Some(failed) = known
+        .map(|s| &s.eventsub_failed_subscriptions)
+        .filter(|f| !f.is_empty())
+    {
+        spans.push(colored(
+            format!("（{} 購読失敗）", failed.join(", ")),
+            Color::Red,
+        ));
+    }
     spans.push(Span::raw(format!("{SEPARATOR}視聴者一覧: ")));
     spans.extend(chatters_status_spans(known));
     if let Some(reason) = reason {
@@ -282,6 +291,7 @@ mod tests {
                 eventsub: ConnectionState::Disconnected,
                 chatters_last_success: Some(at(100)),
                 chatters_last_error: None,
+                eventsub_failed_subscriptions: Vec::new(),
             },
         }));
         state
@@ -329,6 +339,41 @@ mod tests {
         let status = lines(&terminal)[18].clone();
         assert!(status.contains("取得失敗"), "{status}");
         assert!(status.contains("401 Unauthorized"), "{status}");
+    }
+
+    #[test]
+    fn status_line_shows_failed_subscriptions_next_to_eventsub() {
+        let mut state = connected_state();
+        state.apply(FeedMessage::Status(Status {
+            eventsub: ConnectionState::Connected,
+            eventsub_failed_subscriptions: vec![
+                "channel.follow".into(),
+                "channel.chat.notification".into(),
+            ],
+            ..state.status().clone()
+        }));
+        let terminal = render(&mut state, 160, 20);
+        let status = lines(&terminal)[18].clone();
+        assert!(
+            status.contains(
+                "EventSub: 接続（channel.follow, channel.chat.notification 購読失敗） | 視聴者一覧:"
+            ),
+            "{status}"
+        );
+        let buffer = terminal.backend().buffer();
+        let x = status.find("channel.follow").map(|byte| {
+            // 全角文字は 2 セル。バイト位置ではなく表示幅で x を求める。
+            Span::raw(&status[..byte]).width() as u16
+        });
+        assert_eq!(buffer[(x.unwrap(), 18)].fg, Color::Red);
+    }
+
+    #[test]
+    fn status_line_has_no_failure_note_when_every_subscription_succeeded() {
+        let mut state = connected_state();
+        let terminal = render(&mut state, 120, 20);
+        let status = lines(&terminal)[18].clone();
+        assert!(!status.contains("購読失敗"), "{status}");
     }
 
     #[test]

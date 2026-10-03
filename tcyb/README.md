@@ -88,6 +88,8 @@ cargo run -p tcyb -- auth-code
 cargo run -p tcyb -- read-chat
 ```
 
+起動時に、EventSub の購読に使う配信チャンネル（設定の `channel`）の ID を Helix の Get Users で引き、トークンストアに保存する。2 回目以降は `channel` が保存済みの login と一致すれば（大文字小文字は区別しない）保存済みの ID を使い、API を呼ばない。`channel` を変えると引き直して上書きする。引くときの一時的な失敗（通信エラー・5xx）は間隔を空けて 3 回まで試し、それでも失敗するか、4xx・チャンネル未検出のときは起動を中止する（[ADR-0027](../docs/adr/0027-cache-channel-id-in-store-and-extend-status-additively.md)）。`show-chatters` も同じ保存済みの ID を使う。
+
 ### 通知の読み上げ
 
 `read-chat` は EventSub で次の 3 つを購読する（配信者は設定の `channel`、bot は `username` のアカウント）。
@@ -152,7 +154,7 @@ template = "{system_message}"
    cargo run -p tcyb -- monitor
    ```
 
-画面は左にコメント（上）と通知（下）、右に視聴者、最下部に read-chat・IRC・EventSub・視聴者一覧の状態行が出る。接続直後に `read-chat` が保持している直近の履歴が表示され、以降はリアルタイムで追加される。視聴者欄では、接続後に新しく現れた視聴者に印が付く。
+画面は左にコメント（上）と通知（下）、右に視聴者、最下部に read-chat・IRC・EventSub・視聴者一覧の状態行が出る。IRC はログイン完了の応答を受けてから、EventSub は購読処理を終えてから「接続」になる（それまでは「接続待ち」）。EventSub の購読に失敗した種別があれば、EventSub の状態の後ろに `（channel.chat.notification 購読失敗）` のように出る（新しいセッションで消える）。接続直後に `read-chat` が保持している直近の履歴が表示され、以降はリアルタイムで追加される。視聴者欄では、接続後に新しく現れた視聴者に印が付く。
 
 | キー | 動作 |
 | --- | --- |

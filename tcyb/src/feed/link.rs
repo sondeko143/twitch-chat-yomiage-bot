@@ -37,9 +37,26 @@ impl LinkStatus {
         self.set(ConnectionState::Connected);
     }
 
+    /// EventSub の購読処理を終えた。`connected` にし、購読に失敗した種別を報告する
+    /// （1 回の更新で両方を反映する）。
+    pub fn subscribed(&self, failed_subscriptions: Vec<String>) {
+        let link = self.link;
+        self.hub.update_status(|s| {
+            *link.field(s) = ConnectionState::Connected;
+            s.eventsub_failed_subscriptions = failed_subscriptions;
+        });
+    }
+
+    /// 状態を変える。EventSub のセッションが始まる・終わるときは、前のセッションの
+    /// 購読失敗を消す。
     fn set(&self, state: ConnectionState) {
         let link = self.link;
-        self.hub.update_status(|s| *link.field(s) = state);
+        self.hub.update_status(|s| {
+            *link.field(s) = state;
+            if link == Link::EventSub && state != ConnectionState::Connected {
+                s.eventsub_failed_subscriptions.clear();
+            }
+        });
     }
 }
 
@@ -77,6 +94,43 @@ mod tests {
         let guard = LinkStatus::connecting(hub.clone(), Link::Irc);
         guard.connected();
         assert_eq!(states(&hub), (Connected, Disconnected));
+    }
+
+    fn failed(hub: &FeedHub) -> Vec<String> {
+        hub.subscribe().0.status.eventsub_failed_subscriptions
+    }
+
+    #[test]
+    fn subscribed_reports_connected_with_the_failed_types_of_this_session_only() {
+        let hub = FeedHub::new(1);
+        let guard = LinkStatus::connecting(hub.clone(), Link::EventSub);
+        guard.subscribed(vec!["channel.follow".into()]);
+        assert_eq!(states(&hub).1, ConnectionState::Connected);
+        assert_eq!(failed(&hub), ["channel.follow"]);
+
+        // 切れたら今のセッションの失敗は消える
+        drop(guard);
+        assert_eq!(states(&hub).1, ConnectionState::Disconnected);
+        assert!(failed(&hub).is_empty());
+
+        // 新しいセッションは前のセッションの失敗を引き継がない
+        hub.update_status(|s| s.eventsub_failed_subscriptions = vec!["stale".into()]);
+        let guard = LinkStatus::connecting(hub.clone(), Link::EventSub);
+        assert!(failed(&hub).is_empty());
+        guard.subscribed(Vec::new());
+        assert_eq!(states(&hub).1, ConnectionState::Connected);
+        assert!(failed(&hub).is_empty());
+    }
+
+    #[test]
+    fn irc_link_leaves_eventsub_failures_alone() {
+        let hub = FeedHub::new(1);
+        let eventsub = LinkStatus::connecting(hub.clone(), Link::EventSub);
+        eventsub.subscribed(vec!["channel.raid".into()]);
+        let irc = LinkStatus::connecting(hub.clone(), Link::Irc);
+        irc.connected();
+        drop(irc);
+        assert_eq!(failed(&hub), ["channel.raid"]);
     }
 
     #[tokio::test]

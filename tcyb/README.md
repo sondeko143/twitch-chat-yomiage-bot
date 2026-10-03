@@ -128,7 +128,9 @@ template = "{system_message}"
 
 > **注意（二重読み上げ）:** レイドは `channel.raid` と、`channel.chat.notification` の `notice_type = "raid"` の両方で届く。両方にテンプレートを書くと同じレイドを二重に読み上げるので、どちらか一方だけに書く。`notice_type` を省略した `channel.chat.notification` の要素もレイドに一致する点に注意。
 
-> **移行:** `greeting_template`（`cb_greeting_template` を含む）は廃止された。設定に残っていると `read-chat` はエラーで起動を中止する。上の `channel.follow` の例のように `[[notification_speech]]` へ書き換える。
+> **移行:** `greeting_template`（`cb_greeting_template` を含む）は廃止された。設定に残っていると、共有の設定読み込みが失敗するため `read-chat` だけでなく **すべてのサブコマンド（`auth-code` を含む）** がエラーで起動を中止する。`auth-code` を実行する前にも、このキーを削除するか上の `channel.follow` の例のように `[[notification_speech]]` へ書き換えること。
+>
+> また、`greeting_template` を一度も設定していなかった場合は、従来は組み込みの既定のフォロー挨拶が読み上げられていた。この変更後は `type = "channel.follow"` の `[[notification_speech]]` を追加するまでフォローは無言になり、エラーも表示されない。
 
 ### 監視 TUI（`tcyb monitor`）
 

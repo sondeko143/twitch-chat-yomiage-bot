@@ -44,7 +44,7 @@ where
 }
 
 const TWITCH_API_HOST: &str = "api.twitch.tv";
-const TWITCH_USERS_API_URL: &str = formatcp!("https://{}/helix/users", TWITCH_API_HOST);
+pub(crate) const TWITCH_USERS_API_URL: &str = formatcp!("https://{}/helix/users", TWITCH_API_HOST);
 const TWITCH_BANS_API_URL: &str = formatcp!("https://{}/helix/moderation/bans", TWITCH_API_HOST);
 const TWITCH_CHATTERS_API_URL: &str = formatcp!("https://{}/helix/chat/chatters", TWITCH_API_HOST);
 const TWITCH_FOLLOWED_API_URL: &str =
@@ -73,14 +73,36 @@ pub struct UserData {
     pub created_at: String,
 }
 
+/// 1 回の要求に許す時間。応答しない接続で呼び出しが居座らないようにする。
+pub(crate) const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 pub async fn get_user(
+    username: &str,
+    access_token: &str,
+    client_id: &str,
+) -> Result<User, reqwest::Error> {
+    get_user_from(
+        TWITCH_USERS_API_URL,
+        REQUEST_TIMEOUT,
+        username,
+        access_token,
+        client_id,
+    )
+    .await
+}
+
+/// [`get_user`] の接続先・タイムアウトを差し替えられる版（テスト用の継ぎ目）。
+pub(crate) async fn get_user_from(
+    url: &str,
+    timeout: std::time::Duration,
     username: &str,
     access_token: &str,
     client_id: &str,
 ) -> Result<User, reqwest::Error> {
     let headers = auth_headers(access_token, client_id);
     let res: User = HTTP_CLIENT
-        .get(TWITCH_USERS_API_URL)
+        .get(url)
+        .timeout(timeout)
         .headers(headers)
         .query(&[("login", username)])
         .send()
@@ -104,7 +126,7 @@ pub async fn get_tokens_by_refresh(
 ) -> Result<(String, String), reqwest::Error> {
     let res: RefreshToken = HTTP_CLIENT
         .post(TWITCH_OAUTH2_TOKEN_URL)
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(REQUEST_TIMEOUT)
         .form(&[
             ("refresh_token", refresh_token),
             ("client_id", client_id),
@@ -402,7 +424,7 @@ fn auth_headers(access_token: &str, client_id: &str) -> HeaderMap {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_http_client, desired_subscriptions, get_chatters_from};
+    use super::{build_http_client, desired_subscriptions, get_chatters_from, get_user_from};
     use serde_json::json;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
@@ -601,6 +623,34 @@ mod tests {
 
         assert_eq!(got.data.len(), 1);
         assert_eq!(log.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn get_user_times_out_when_the_server_never_responds() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        // 受け付けるだけで応答しない。接続は握ったままにする。
+        let _server = tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((conn, _)) = listener.accept().await {
+                held.push(conn);
+            }
+        });
+
+        let got = within(
+            "get_user",
+            get_user_from(
+                &format!("http://{addr}/"),
+                Duration::from_millis(100),
+                "login",
+                "tok",
+                "cid",
+            ),
+        )
+        .await;
+
+        let err = got.expect_err("応答が無ければタイムアウトするはず");
+        assert!(err.is_timeout(), "{err:?}");
     }
 
     #[test]

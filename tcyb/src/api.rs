@@ -203,26 +203,69 @@ pub struct Chatter {
     pub user_name: String,
 }
 
+/// Get Chatters の 1 ページ分。`pagination.cursor` が無ければ最終ページ。
+#[derive(Deserialize)]
+struct ChattersPage {
+    data: Vec<Chatter>,
+    #[serde(default)]
+    pagination: Option<Pagination>,
+}
+
+/// Get Chatters の 1 ページあたりの最大件数（Twitch の上限）。
+const CHATTERS_PAGE_SIZE: &str = "1000";
+
+/// `pagination.cursor` が返る限り `after` を付けて辿り、全員を集める。
 pub async fn get_chatters(
     broadcaster_id: &str,
     operator_id: &str,
     access_token: &str,
     client_id: &str,
 ) -> Result<Chatters, reqwest::Error> {
-    let headers = auth_headers(access_token, client_id);
-    let res: Chatters = HTTP_CLIENT
-        .get(TWITCH_CHATTERS_API_URL)
-        .headers(headers)
-        .query(&[
+    get_chatters_from(
+        TWITCH_CHATTERS_API_URL,
+        broadcaster_id,
+        operator_id,
+        access_token,
+        client_id,
+    )
+    .await
+}
+
+async fn get_chatters_from(
+    url: &str,
+    broadcaster_id: &str,
+    operator_id: &str,
+    access_token: &str,
+    client_id: &str,
+) -> Result<Chatters, reqwest::Error> {
+    let mut all = Vec::new();
+    let mut after: Option<String> = None;
+    loop {
+        let mut query = vec![
             ("broadcaster_id", broadcaster_id),
             ("moderator_id", operator_id),
-        ])
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
-    Ok(res)
+            ("first", CHATTERS_PAGE_SIZE),
+        ];
+        if let Some(cursor) = after.as_deref() {
+            query.push(("after", cursor));
+        }
+        let page: ChattersPage = HTTP_CLIENT
+            .get(url)
+            .headers(auth_headers(access_token, client_id))
+            .query(&query)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        all.extend(page.data);
+        match page.pagination.and_then(|p| p.cursor) {
+            Some(cursor) if !cursor.is_empty() && after.as_deref() != Some(cursor.as_str()) => {
+                after = Some(cursor);
+            }
+            _ => return Ok(Chatters { data: all }),
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize)]
@@ -359,7 +402,7 @@ fn auth_headers(access_token: &str, client_id: &str) -> HeaderMap {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_http_client, desired_subscriptions};
+    use super::{build_http_client, desired_subscriptions, get_chatters_from};
     use serde_json::json;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
@@ -450,6 +493,114 @@ mod tests {
             sent.is_err(),
             "副作用のある POST は張り直さずエラーを返すはず"
         );
+    }
+
+    /// リクエスト行（`GET /path?query HTTP/1.1`）を返しつつヘッダ終端まで読む。
+    async fn read_request_line(conn: &mut TcpStream) -> Option<String> {
+        let mut seen: Vec<u8> = Vec::new();
+        let mut byte = [0u8; 1];
+        while conn.read_exact(&mut byte).await.is_ok() {
+            seen.push(byte[0]);
+            if seen.ends_with(b"\r\n\r\n") {
+                let text = String::from_utf8_lossy(&seen).into_owned();
+                return text.lines().next().map(str::to_string);
+            }
+        }
+        None
+    }
+
+    /// `after` の値に応じたページを返す Get Chatters のモック。受けたリクエスト行を記録する。
+    async fn serve_chatters_pages(
+        listener: TcpListener,
+        pages: Vec<(Option<&'static str>, serde_json::Value)>,
+        log: Arc<std::sync::Mutex<Vec<String>>>,
+    ) {
+        while let Ok((mut conn, _)) = listener.accept().await {
+            let pages = pages.clone();
+            let log = Arc::clone(&log);
+            tokio::spawn(async move {
+                while let Some(line) = read_request_line(&mut conn).await {
+                    log.lock().unwrap().push(line.clone());
+                    let after = line
+                        .split(['?', '&', ' '])
+                        .find_map(|kv| kv.strip_prefix("after="))
+                        .map(str::to_string);
+                    let body = pages
+                        .iter()
+                        .find(|(key, _)| key.map(str::to_string) == after)
+                        .map(|(_, body)| body.to_string())
+                        .unwrap_or_else(|| "{}".to_string());
+                    let res = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    if conn.write_all(res.as_bytes()).await.is_err() {
+                        return;
+                    }
+                }
+            });
+        }
+    }
+
+    fn chatter_json(login: &str) -> serde_json::Value {
+        json!({"user_id": format!("{login}-id"), "user_login": login, "user_name": login})
+    }
+
+    #[tokio::test]
+    async fn get_chatters_follows_cursor_across_pages_and_collects_everyone() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let pages = vec![
+            (
+                None,
+                json!({"data": [chatter_json("a"), chatter_json("b")], "pagination": {"cursor": "c1"}}),
+            ),
+            (
+                Some("c1"),
+                json!({"data": [chatter_json("c")], "pagination": {"cursor": "c2"}}),
+            ),
+            (
+                Some("c2"),
+                json!({"data": [chatter_json("d")], "pagination": {}}),
+            ),
+        ];
+        let _server = tokio::spawn(serve_chatters_pages(listener, pages, Arc::clone(&log)));
+
+        let got = within(
+            "get_chatters",
+            get_chatters_from(&format!("http://{addr}/"), "b1", "m1", "tok", "cid"),
+        )
+        .await
+        .unwrap();
+
+        let logins: Vec<_> = got.data.iter().map(|c| c.user_login.as_str()).collect();
+        assert_eq!(logins, ["a", "b", "c", "d"]);
+        let requests = log.lock().unwrap().clone();
+        assert_eq!(requests.len(), 3, "{requests:?}");
+        assert!(!requests[0].contains("after="), "{}", requests[0]);
+        assert!(requests[1].contains("after=c1"), "{}", requests[1]);
+        assert!(requests[2].contains("after=c2"), "{}", requests[2]);
+    }
+
+    #[tokio::test]
+    async fn get_chatters_single_page_without_pagination_field_makes_one_request() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let pages = vec![(None, json!({"data": [chatter_json("a")]}))];
+        let _server = tokio::spawn(serve_chatters_pages(listener, pages, Arc::clone(&log)));
+
+        let got = within(
+            "get_chatters",
+            get_chatters_from(&format!("http://{addr}/"), "b1", "m1", "tok", "cid"),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(got.data.len(), 1);
+        assert_eq!(log.lock().unwrap().len(), 1);
     }
 
     #[test]

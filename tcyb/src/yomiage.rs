@@ -63,6 +63,18 @@ async fn refresh_tokens_with_backoff(
     }
 }
 
+/// follow / raid / chat.notification は bot ではなく設定の channel（配信者）が対象。
+async fn resolve_broadcaster_id(store: &mut Store, settings: &Settings) -> anyhow::Result<String> {
+    crate::chat::resolve_channel_user_id(
+        store,
+        &settings.channel,
+        &settings.client_id,
+        &settings.client_secret,
+    )
+    .instrument(tracing::info_span!("channel_id_fetch"))
+    .await
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn yomiage(settings: &Settings) -> anyhow::Result<()> {
     let irc_url = url::Url::parse(IRC_CONNECT_ADDR)?;
@@ -75,6 +87,7 @@ pub async fn yomiage(settings: &Settings) -> anyhow::Result<()> {
         .user_id(&settings.username, &settings.client_id)
         .instrument(tracing::info_span!("user_id_fetch"))
         .await?;
+    let broadcaster_id = resolve_broadcaster_id(&mut store, settings).await?;
     loop {
         let access_token = store.access_token();
         let chat_t = tokio::spawn(read_chat_client_loop(
@@ -90,12 +103,15 @@ pub async fn yomiage(settings: &Settings) -> anyhow::Result<()> {
         let sub_event_t = tokio::spawn(sub_event_client_loop(
             event_url.clone(),
             String::from(access_token),
+            broadcaster_id.clone(),
             user_id.clone(),
             settings.client_id.clone(),
             settings.speech_address.clone(),
             settings.operations.clone(),
             settings.notification_speech.clone(),
             EVENT_TIMEOUT_SECS,
+            // 通知の配信口（ハブ）はまだ無い。
+            None,
         ));
         let chat_abort_handle = chat_t.abort_handle();
         let sub_event_abort_handle = sub_event_t.abort_handle();

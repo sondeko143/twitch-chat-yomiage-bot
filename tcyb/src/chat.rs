@@ -46,7 +46,7 @@ where
     }
 }
 
-async fn resolve_channel_user_id(
+pub(crate) async fn resolve_channel_user_id(
     store: &mut Store,
     channel_name: &str,
     client_id: &str,

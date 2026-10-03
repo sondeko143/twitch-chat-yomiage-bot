@@ -1,4 +1,4 @@
-use crate::api::sub_event;
+use crate::api::{desired_subscriptions, sub_event};
 use crate::notification::render_speech;
 use crate::settings::NotificationSpeech;
 use futures_util::{SinkExt, StreamExt};
@@ -21,16 +21,29 @@ pub enum EventSubError {
     ConnectionError(#[from] tokio_tungstenite::tungstenite::Error),
 }
 
+/// EventSub で受けた通知。購読していない種別も含め、event の JSON をそのまま持つ。
+#[derive(Debug, Clone, PartialEq)]
+pub struct NotificationEvent {
+    pub subscription_type: String,
+    pub event: serde_json::Value,
+    pub received_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// 受けた通知を外（モニタ等）へ渡す口。受け側が閉じていても読み上げは止めない。
+pub type NotificationSink = tokio::sync::mpsc::UnboundedSender<NotificationEvent>;
+
 #[allow(clippy::too_many_arguments)]
 pub async fn sub_event_client_loop(
     url: Url,
     access_token: String,
+    broadcaster_id: String,
     user_id: String,
     client_id: String,
     address: String,
     operations: Vec<String>,
     notification_speech: Vec<NotificationSpeech>,
     timeout_sec: u64,
+    sink: Option<NotificationSink>,
 ) -> Result<(), EventSubError> {
     info!("connect event sub");
     let (mut ws_stream, _) = connect_async(url)
@@ -48,10 +61,12 @@ pub async fn sub_event_client_loop(
             msg,
             &address,
             &operations,
+            &broadcaster_id,
             &user_id,
             &access_token,
             &client_id,
             &notification_speech,
+            sink.as_ref(),
         )
         .await
         {
@@ -125,10 +140,12 @@ async fn process_message(
     msg: Message,
     address: &str,
     operations: &[String],
+    broadcaster_id: &str,
     user_id: &str,
     access_token: &str,
     client_id: &str,
     notification_speech: &[NotificationSpeech],
+    sink: Option<&NotificationSink>,
 ) -> Result<(), MessageError> {
     if msg.is_ping() {
         debug!("ping");
@@ -146,9 +163,15 @@ async fn process_message(
                     None => String::from(""),
                 };
                 info!("session welcome {}", session_id);
-                sub_event(user_id, session_id.as_str(), access_token, client_id)
-                    .instrument(tracing::info_span!("event_subscribe"))
-                    .await?;
+                subscribe_all(
+                    broadcaster_id,
+                    user_id,
+                    session_id.as_str(),
+                    access_token,
+                    client_id,
+                )
+                .instrument(tracing::info_span!("event_subscribe"))
+                .await?;
                 crate::profiling::mark_ready(crate::profiling::Component::Event);
                 Ok(())
             }
@@ -160,24 +183,25 @@ async fn process_message(
                 info!("reconnect to {}", reconnect_url);
                 Err(MessageError::SessionReconnect { reconnect_url })
             }
-            "notification" => match event_msg.metadata.subscription_type {
-                Some(s) => match s.as_str() {
-                    "channel.follow" => {
-                        let event = event_msg.payload.event.unwrap_or(serde_json::Value::Null);
-                        info!("received follow notification {}", event);
-                        if let Some(text) = render_speech(notification_speech, &s, &event) {
-                            vstc::process_command(address, operations, text, None, None, None)
-                                .await?;
-                        }
-                        Ok(())
-                    }
-                    _ => {
-                        info!("received {}", msg_str);
-                        Ok(())
-                    }
-                },
-                None => Ok(()),
-            },
+            "notification" => {
+                let Some((notification, text)) =
+                    interpret_notification(event_msg, notification_speech)
+                else {
+                    return Ok(());
+                };
+                info!(
+                    "received {} notification {}",
+                    notification.subscription_type, notification.event
+                );
+                if let Some(sink) = sink {
+                    // 受け側が閉じていても読み上げには影響させない
+                    let _ = sink.send(notification);
+                }
+                if let Some(text) = text {
+                    vstc::process_command(address, operations, text, None, None, None).await?;
+                }
+                Ok(())
+            }
             _ => {
                 debug!("received {}", msg_str);
                 Ok(())
@@ -185,5 +209,140 @@ async fn process_message(
         }
     } else {
         Ok(())
+    }
+}
+
+/// 購読を全種別について試みる。失敗した種別はログに出して他を続ける。
+/// 401 だけは、トークン更新つきの再接続で自己回復させるためエラーとして返す。
+async fn subscribe_all(
+    broadcaster_id: &str,
+    user_id: &str,
+    session_id: &str,
+    access_token: &str,
+    client_id: &str,
+) -> Result<(), reqwest::Error> {
+    let mut unauthorized = None;
+    for sub in desired_subscriptions(broadcaster_id, user_id, session_id) {
+        if let Err(e) = sub_event(&sub, access_token, client_id).await {
+            warn!("failed to subscribe {}: {}", sub.type_, e);
+            if e.status() == Some(reqwest::StatusCode::UNAUTHORIZED) {
+                unauthorized.get_or_insert(e);
+            }
+        }
+    }
+    unauthorized.map_or(Ok(()), Err)
+}
+
+/// 通知メッセージから、外へ渡す通知と読み上げ文（テンプレートが一致したときだけ）を作る。
+fn interpret_notification(
+    msg: EventSubMessage,
+    notification_speech: &[NotificationSpeech],
+) -> Option<(NotificationEvent, Option<String>)> {
+    let subscription_type = msg.metadata.subscription_type?;
+    let event = msg.payload.event.unwrap_or(serde_json::Value::Null);
+    let text = render_speech(notification_speech, &subscription_type, &event);
+    let notification = NotificationEvent {
+        subscription_type,
+        event,
+        received_at: chrono::Utc::now(),
+    };
+    Some((notification, text))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn msg(subscription_type: &str, event: serde_json::Value) -> EventSubMessage {
+        serde_json::from_value(json!({
+            "metadata": {"message_type": "notification", "subscription_type": subscription_type},
+            "payload": {"event": event},
+        }))
+        .unwrap()
+    }
+
+    fn speech(type_: &str, notice_type: Option<&str>, template: &str) -> NotificationSpeech {
+        NotificationSpeech {
+            type_: type_.to_string(),
+            notice_type: notice_type.map(str::to_string),
+            template: template.to_string(),
+        }
+    }
+
+    #[test]
+    fn follow_is_spoken_only_when_a_template_matches() {
+        let event = json!({"user_name": "taro"});
+        let templates = [speech(
+            "channel.follow",
+            None,
+            "{user_name}さん、フォローありがとう",
+        )];
+
+        let (n, text) =
+            interpret_notification(msg("channel.follow", event.clone()), &templates).unwrap();
+        assert_eq!(text.as_deref(), Some("taroさん、フォローありがとう"));
+        assert_eq!(n.event, event);
+
+        let (_, text) = interpret_notification(msg("channel.follow", event), &[]).unwrap();
+        assert_eq!(text, None);
+    }
+
+    #[test]
+    fn raid_uses_its_template() {
+        let event = json!({"from_broadcaster_user_name": "hanako", "viewers": 42});
+        let templates = [speech(
+            "channel.raid",
+            None,
+            "{from_broadcaster_user_name}さんから{viewers}人のレイド",
+        )];
+
+        let (_, text) = interpret_notification(msg("channel.raid", event), &templates).unwrap();
+
+        assert_eq!(text.as_deref(), Some("hanakoさんから42人のレイド"));
+    }
+
+    #[test]
+    fn chat_notification_sub_picks_the_notice_type_template() {
+        let event = json!({
+            "notice_type": "sub",
+            "chatter_user_name": "jiro",
+            "sub": {"sub_tier": "1000"},
+        });
+        let templates = [
+            speech("channel.chat.notification", None, "other"),
+            speech(
+                "channel.chat.notification",
+                Some("sub"),
+                "{chatter_user_name}がサブスク",
+            ),
+        ];
+
+        let (_, text) =
+            interpret_notification(msg("channel.chat.notification", event), &templates).unwrap();
+
+        assert_eq!(text.as_deref(), Some("jiroがサブスク"));
+    }
+
+    #[test]
+    fn unsubscribed_types_still_reach_the_outlet_with_their_event() {
+        let event = json!({"anything": [1, 2, 3]});
+
+        let (n, text) = interpret_notification(msg("channel.cheer", event.clone()), &[]).unwrap();
+
+        assert_eq!(n.subscription_type, "channel.cheer");
+        assert_eq!(n.event, event);
+        assert_eq!(text, None);
+    }
+
+    #[test]
+    fn notification_without_subscription_type_is_ignored() {
+        let m: EventSubMessage = serde_json::from_value(json!({
+            "metadata": {"message_type": "notification"},
+            "payload": {"event": {}},
+        }))
+        .unwrap();
+
+        assert!(interpret_notification(m, &[]).is_none());
     }
 }

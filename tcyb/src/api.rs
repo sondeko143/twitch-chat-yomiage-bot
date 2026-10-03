@@ -271,52 +271,72 @@ pub async fn get_followed(
     Ok(res)
 }
 
-#[derive(Deserialize, Serialize)]
-struct EventSubSubscription<'a> {
+#[derive(Serialize, Debug, PartialEq)]
+pub struct EventSubSubscription {
     #[serde(rename = "type")]
-    type_: &'a str,
-    version: &'a str,
-    #[serde(borrow)]
-    condition: EventSubCondition<'a>,
-    #[serde(borrow)]
-    transport: EventSubTransport<'a>,
+    pub type_: &'static str,
+    pub version: &'static str,
+    pub condition: serde_json::Value,
+    pub transport: EventSubTransport,
 }
 
-#[derive(Serialize, Deserialize)]
-struct EventSubCondition<'a> {
-    broadcaster_user_id: &'a str,
-    moderator_user_id: &'a str,
+#[derive(Serialize, Debug, PartialEq)]
+pub struct EventSubTransport {
+    pub method: &'static str,
+    pub session_id: String,
 }
 
-#[derive(Serialize, Deserialize)]
-struct EventSubTransport<'a> {
-    method: &'a str,
-    session_id: &'a str,
+/// セッション開始時に購読する EventSub の一覧を組む。
+///
+/// `broadcaster_id` は設定の `channel` から解決した配信者の ID、`bot_id` は bot
+/// アカウントの ID（moderator / 読み取りユーザ）。
+pub fn desired_subscriptions(
+    broadcaster_id: &str,
+    bot_id: &str,
+    session_id: &str,
+) -> Vec<EventSubSubscription> {
+    let transport = || EventSubTransport {
+        method: "websocket",
+        session_id: session_id.to_string(),
+    };
+    vec![
+        EventSubSubscription {
+            type_: "channel.follow",
+            version: "2",
+            condition: serde_json::json!({
+                "broadcaster_user_id": broadcaster_id,
+                "moderator_user_id": bot_id,
+            }),
+            transport: transport(),
+        },
+        EventSubSubscription {
+            type_: "channel.raid",
+            version: "1",
+            condition: serde_json::json!({ "to_broadcaster_user_id": broadcaster_id }),
+            transport: transport(),
+        },
+        EventSubSubscription {
+            type_: "channel.chat.notification",
+            version: "1",
+            condition: serde_json::json!({
+                "broadcaster_user_id": broadcaster_id,
+                "user_id": bot_id,
+            }),
+            transport: transport(),
+        },
+    ]
 }
 
 pub async fn sub_event(
-    operator_id: &str,
-    session_id: &str,
+    sub: &EventSubSubscription,
     access_token: &str,
     client_id: &str,
 ) -> Result<String, reqwest::Error> {
     let headers = auth_headers(access_token, client_id);
-    let sub = EventSubSubscription {
-        type_: "channel.follow",
-        version: "2",
-        condition: EventSubCondition {
-            broadcaster_user_id: operator_id,
-            moderator_user_id: operator_id,
-        },
-        transport: EventSubTransport {
-            method: "websocket",
-            session_id,
-        },
-    };
     let res = HTTP_CLIENT
         .post(TWITCH_SUB_EVENT_API_URL)
         .headers(headers)
-        .json(&sub)
+        .json(sub)
         .send()
         .await?
         .error_for_status()?
@@ -339,7 +359,8 @@ fn auth_headers(access_token: &str, client_id: &str) -> HeaderMap {
 
 #[cfg(test)]
 mod tests {
-    use super::build_http_client;
+    use super::{build_http_client, desired_subscriptions};
+    use serde_json::json;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
@@ -429,5 +450,38 @@ mod tests {
             sent.is_err(),
             "副作用のある POST は張り直さずエラーを返すはず"
         );
+    }
+
+    #[test]
+    fn subscribes_follow_raid_and_chat_notification_for_the_channel() {
+        let subs = desired_subscriptions("chan1", "bot1", "sess");
+
+        let got: Vec<_> = subs
+            .iter()
+            .map(|s| (s.type_, s.version, s.condition.clone()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                (
+                    "channel.follow",
+                    "2",
+                    json!({"broadcaster_user_id": "chan1", "moderator_user_id": "bot1"})
+                ),
+                (
+                    "channel.raid",
+                    "1",
+                    json!({"to_broadcaster_user_id": "chan1"})
+                ),
+                (
+                    "channel.chat.notification",
+                    "1",
+                    json!({"broadcaster_user_id": "chan1", "user_id": "bot1"})
+                ),
+            ]
+        );
+        assert!(subs
+            .iter()
+            .all(|s| s.transport.method == "websocket" && s.transport.session_id == "sess"));
     }
 }

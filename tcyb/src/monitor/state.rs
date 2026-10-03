@@ -172,7 +172,8 @@ impl MonitorState {
         self.chatters = chatters;
     }
 
-    /// 視聴者一覧（取得済みなら）。新規の人を先に、それぞれ一覧の順で並べる。
+    /// 視聴者一覧（取得済みなら）。新規の人を先に、それぞれ login の昇順で並べる。
+    /// Get Chatters は返す順を保証しないため、ここで並べて更新ごとの並び替わりを防ぐ。
     /// 組の 2 番目は「monitor 起動後に初めて現れた視聴者か」。
     pub fn chatters(&self) -> Option<Vec<(&Chatter, bool)>> {
         let chatters = self.chatters.as_ref()?;
@@ -181,7 +182,7 @@ impl MonitorState {
             .iter()
             .map(|c| (c, self.is_new_viewer(&c.login)))
             .collect();
-        rows.sort_by_key(|(_, is_new)| !is_new);
+        rows.sort_by(|(a, a_new), (b, b_new)| b_new.cmp(a_new).then_with(|| a.login.cmp(&b.login)));
         Some(rows)
     }
 
@@ -436,6 +437,28 @@ pub(super) mod tests {
             .map(|(c, _)| c.login.clone())
             .collect();
         assert_eq!(order, ["c", "d", "a", "b"]);
+    }
+
+    #[test]
+    fn viewers_are_ordered_by_login_within_each_group_regardless_of_api_order() {
+        let order = |state: &MonitorState| -> Vec<String> {
+            state
+                .chatters()
+                .unwrap()
+                .into_iter()
+                .map(|(c, _)| c.login.clone())
+                .collect()
+        };
+        let mut state = MonitorState::new(3);
+        state.apply(FeedMessage::Chatters(chatters(&["b", "a"])));
+        assert_eq!(order(&state), ["a", "b"]);
+
+        state.apply(FeedMessage::Chatters(chatters(&["d", "b", "c", "a"])));
+        assert_eq!(order(&state), ["c", "d", "a", "b"]);
+
+        // 同じ顔ぶれなら API の返す順が変わっても並びは変わらない
+        state.apply(FeedMessage::Chatters(chatters(&["a", "c", "b", "d"])));
+        assert_eq!(order(&state), ["c", "d", "a", "b"]);
     }
 
     #[test]

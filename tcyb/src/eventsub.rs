@@ -55,7 +55,7 @@ pub async fn sub_event_client_loop(
     status: Option<LinkStatus>,
 ) -> Result<(), EventSubError> {
     info!("connect event sub");
-    let (mut ws_stream, _) = connect_async(url)
+    let (mut ws_stream, _) = connect_async(url.as_str())
         .instrument(tracing::info_span!("event_connect"))
         .await?;
     if let Some(status) = &status {

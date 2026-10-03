@@ -90,7 +90,7 @@ async fn connect_once(
     send(tx, FeedEvent::Connected)?;
     while let Some(msg) = ws.next().await {
         match msg {
-            Ok(Message::Text(text)) => send(tx, FeedEvent::Text(text))?,
+            Ok(Message::Text(text)) => send(tx, FeedEvent::Text(text.to_string()))?,
             Ok(Message::Close(_)) => break,
             Ok(_) => {}
             Err(e) => return Ok(e.to_string()),

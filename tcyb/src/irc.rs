@@ -108,7 +108,7 @@ pub async fn read_chat_client_loop(
                 }
             }
             _ = ping_interval.tick() => {
-                let send_fut = ws_stream.send(Message::Text(String::from("PING :tcyb")));
+                let send_fut = ws_stream.send(Message::Text("PING :tcyb".into()));
                 match tokio::time::timeout(
                     std::time::Duration::from_secs(PING_SEND_TIMEOUT_SECS),
                     send_fut,
@@ -136,22 +136,22 @@ async fn connect_and_authorize(
     username: &str,
     channel: &str,
 ) -> Result<WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>, ChatError> {
-    let (mut ws_stream, _) = connect_async(url)
+    let (mut ws_stream, _) = connect_async(url.as_str())
         .instrument(tracing::info_span!("irc_connect"))
         .await?;
     info!("authorizing...");
     async {
         ws_stream
-            .send(Message::Text(format!("PASS oauth:{}", access_token)))
+            .send(Message::Text(format!("PASS oauth:{}", access_token).into()))
             .await?;
         ws_stream
-            .send(Message::Text(format!("NICK {}", username)))
+            .send(Message::Text(format!("NICK {}", username).into()))
             .await?;
         ws_stream
-            .send(Message::Text(format!("JOIN #{}", channel)))
+            .send(Message::Text(format!("JOIN #{}", channel).into()))
             .await?;
         ws_stream
-            .send(Message::Text(String::from("CAP REQ :twitch.tv/tags")))
+            .send(Message::Text("CAP REQ :twitch.tv/tags".into()))
             .await?;
         Ok::<(), tokio_tungstenite::tungstenite::Error>(())
     }
@@ -260,7 +260,7 @@ async fn process_message(
             IrcMessageKind::Ping => {
                 info!("respond to ping");
                 ws_stream
-                    .send(Message::Text(String::from("PONG :tmi.twitch.tv")))
+                    .send(Message::Text("PONG :tmi.twitch.tv".into()))
                     .await?;
                 Ok(())
             }
@@ -318,10 +318,7 @@ async fn send_reply(
     body: &str,
 ) {
     let reply = format!("@reply-parent-msg-id={msg_id} PRIVMSG #{channel} :{body}");
-    match ws_stream
-        .send(Message::Text(String::from(reply.as_str())))
-        .await
-    {
+    match ws_stream.send(Message::Text(reply.as_str().into())).await {
         Ok(_) => info!("{reply}"),
         Err(err) => warn!("{err}"),
     }

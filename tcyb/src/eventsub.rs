@@ -16,7 +16,13 @@ pub enum EventSubError {
     #[error("session reconnect")]
     SessionReconnect { reconnect_url: String },
     #[error(transparent)]
-    ConnectionError(#[from] tokio_tungstenite::tungstenite::Error),
+    ConnectionError(Box<tokio_tungstenite::tungstenite::Error>),
+}
+
+impl From<tokio_tungstenite::tungstenite::Error> for EventSubError {
+    fn from(e: tokio_tungstenite::tungstenite::Error) -> Self {
+        Self::ConnectionError(Box::new(e))
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -113,13 +119,19 @@ enum MessageError {
     #[error("session reconnect")]
     SessionReconnect { reconnect_url: String },
     #[error(transparent)]
-    ConnectionError(#[from] tokio_tungstenite::tungstenite::Error),
+    ConnectionError(Box<tokio_tungstenite::tungstenite::Error>),
     #[error(transparent)]
     SerializeError(#[from] serde_json::Error),
     #[error(transparent)]
     RequestError(#[from] reqwest::Error),
     #[error(transparent)]
     VstcError(#[from] vstc::VstcError),
+}
+
+impl From<tokio_tungstenite::tungstenite::Error> for MessageError {
+    fn from(e: tokio_tungstenite::tungstenite::Error) -> Self {
+        Self::ConnectionError(Box::new(e))
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

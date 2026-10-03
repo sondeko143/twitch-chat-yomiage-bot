@@ -1,6 +1,6 @@
 # 0027. 配信チャンネル ID はトークンストアにキャッシュし、配信メッセージの状態は版を上げず任意フィールドで拡張する
 
-- Status: Proposed
+- Status: Accepted
 - 効力: 既定
 - Date: 2026-10-03
 - Related: [ADR-0023](0023-separate-monitor-tui-via-local-feed-from-read-chat.md), [ADR-0024](0024-websocket-json-for-monitor-feed.md), [ADR-0026](0026-receive-sub-events-via-chat-notification.md)

@@ -62,3 +62,7 @@ spec 承認後、plan の手前で毎回判定する。1 つでも該当した�
 | [0020](0020-interval-option-on-show-chatters.md) | 周期取得は show-chatters の `--interval` で表し新サブコマンドも設定キーも作らない | Accepted | 2026-08-09 | [show-chatters 常駐](../superpowers/specs/2026-08-09-tcyb-show-chatters-daemon-design.md) |
 | [0021](0021-bound-401-retry-to-a-single-refresh.md) | トークンリフレッシュ後の 401 は再リフレッシュせず常駐を終了する | Accepted | 2026-08-09 | [show-chatters 常駐](../superpowers/specs/2026-08-09-tcyb-show-chatters-daemon-design.md) |
 | [0022](0022-retry-idempotent-gets-once-when-no-response-arrives.md) | 応答が返らなかった Helix の GET は共有クライアント側で 1 回だけ張り直す | Accepted | 2026-08-30 | — |
+| [0023](0023-separate-monitor-tui-via-local-feed-from-read-chat.md) | read-chat にローカル配信口を設け TUI は別プロセスの閲覧専用クライアントにする | Proposed | 2026-10-03 | [monitor TUI](../superpowers/specs/2026-10-03-tcyb-monitor-tui-design.md) |
+| [0024](0024-websocket-json-for-monitor-feed.md) | monitor 配信口は axum の WebSocket 上の JSON メッセージで実装する | Proposed | 2026-10-03 | [monitor TUI](../superpowers/specs/2026-10-03-tcyb-monitor-tui-design.md) |
+| [0025](0025-unify-notification-speech-templates-by-type.md) | 通知読み上げを種別ごとのテンプレート配列に統一し greeting_template を廃止する | Proposed | 2026-10-03 | [monitor TUI](../superpowers/specs/2026-10-03-tcyb-monitor-tui-design.md) |
+| [0026](0026-receive-sub-events-via-chat-notification.md) | サブスク等の通知は bot トークンで購読できる channel.chat.notification で受け取る | Proposed | 2026-10-03 | [monitor TUI](../superpowers/specs/2026-10-03-tcyb-monitor-tui-design.md) |

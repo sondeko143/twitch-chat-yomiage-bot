@@ -7,13 +7,13 @@ mod summary;
 
 pub use hub::{FeedHub, FeedRecvError};
 pub use link::{Link, LinkStatus};
-pub use message::{ChatLine, Chatter, Chatters, FeedMessage, NotificationLine};
+pub use message::{
+    ChatLine, Chatter, Chatters, ConnectionState, FeedDecodeError, FeedMessage, NotificationLine,
+    Snapshot, Status, PROTOCOL_VERSION,
+};
 
-// 受信側（monitor）だけが使う公開 API。monitor の task で使い始めたら外す。
+// 型名・関数名ではまだどこからも参照していない公開 API。参照し始めたら外す。
 #[allow(unused_imports)]
 pub use hub::FeedReceiver;
-#[allow(unused_imports)]
-pub use message::ConnectionState;
-pub use message::{FeedDecodeError, Snapshot, Status, PROTOCOL_VERSION};
 #[allow(unused_imports)]
 pub use summary::summarize;

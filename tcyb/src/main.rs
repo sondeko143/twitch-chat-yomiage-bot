@@ -43,6 +43,8 @@ enum Commands {
     ShowFollowings {
         username: String,
     },
+    /// read-chat の配信口（monitor.enabled = true）に接続して、コメント・通知・視聴者を表示する
+    Monitor {},
 }
 
 /// `run` を Ctrl+C 受信まで走らせる。先に完了した方の結果を返す。
@@ -82,7 +84,9 @@ async fn main() -> Result<()> {
         )?
     };
 
-    {
+    // monitor は端末を TUI が占有するので、stderr へのログで画面を崩さないようロガーを入れない
+    // （接続エラー等は TUI の接続状態行に出す）
+    if !matches!(args.command, Some(Commands::Monitor {})) {
         let _span = tracing::info_span!("logger_init").entered();
         simple_logger::SimpleLogger::new()
             .env()
@@ -159,6 +163,9 @@ async fn main() -> Result<()> {
             )
             .await?;
         }
+        Some(Commands::Monitor {}) => {
+            monitor::run(settings.monitor.port, settings.monitor.history_size).await?;
+        }
         None => {}
     }
     Ok(())
@@ -196,6 +203,15 @@ mod tests {
     #[test]
     fn show_chatters_rejects_non_numeric_interval() {
         assert!(Cli::try_parse_from(["tcyb", "show-chatters", "--interval", "1m"]).is_err());
+    }
+
+    #[test]
+    fn monitor_takes_no_arguments() {
+        assert!(matches!(
+            Cli::try_parse_from(["tcyb", "monitor"]).unwrap().command,
+            Some(Commands::Monitor {})
+        ));
+        assert!(Cli::try_parse_from(["tcyb", "monitor", "extra"]).is_err());
     }
 
     #[test]

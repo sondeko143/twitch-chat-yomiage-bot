@@ -45,6 +45,7 @@
 ### EventSub 通知
 
 - [ ] `channel.follow` に加え、`channel.raid` と `channel.chat.notification` を購読する。
+- [ ] follow / raid / chat.notification の購読は、いずれも設定の `channel` のチャンネルを対象とし、bot アカウントと配信アカウントが別でも配信チャンネルの通知を受け取る。
 - [ ] 購読していない種別も含め、受け取った通知は種別を問わずクライアントへ配信される（未知の種別でも捨てない）。
 - [ ] 必要なスコープ（`user:read:chat`）が `auth-code` で要求され、README に再認可が必要な旨が記載されている。
 

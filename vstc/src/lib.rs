@@ -329,7 +329,7 @@ mod tests {
         let operand = cmd.operand.expect("operand present");
         assert_eq!(operand.text, "hello");
         assert!(operand.sound.is_none());
-        assert!(!operand.trace_id.is_empty());
+        assert_ne!(operand.trace_id, "");
     }
 
     #[test]
@@ -345,7 +345,7 @@ mod tests {
         let operand = cmd.operand.expect("operand present");
         assert_eq!(operand.file_path, "conf.yml");
         assert_eq!(operand.filters, vec!["a".to_string()]);
-        assert!(operand.text.is_empty());
+        assert_eq!(operand.text, "");
         assert!(operand.origin_ts > 0.0);
     }
 
@@ -380,7 +380,7 @@ mod tests {
         assert_eq!(cmd.chains.len(), 3);
         let operand = cmd.operand.expect("operand present");
         assert_eq!(operand.text, "hi");
-        assert!(!operand.trace_id.is_empty());
+        assert_ne!(operand.trace_id, "");
     }
 
     #[test]
@@ -429,7 +429,7 @@ mod tests {
         // ADR-0018 の正規化は受け付ける入力の拡張であって置き換えではない。
         let route = parse_route("o:/tts?spd=1.1").expect("o: form");
         assert_eq!(route.operation, Operation::Tts as i32);
-        assert!(route.remote.is_empty());
+        assert_eq!(route.remote, "");
         assert_eq!(route.queries["spd"], "1.1");
 
         let route = parse_route("o://localhost:8080/transl?t=en").expect("o:// form");

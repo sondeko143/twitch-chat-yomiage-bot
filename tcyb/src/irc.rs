@@ -21,7 +21,13 @@ pub enum ChatError {
     #[error("connection error")]
     MessageConnectionError,
     #[error(transparent)]
-    ConnectionError(#[from] tokio_tungstenite::tungstenite::Error),
+    ConnectionError(Box<tokio_tungstenite::tungstenite::Error>),
+}
+
+impl From<tokio_tungstenite::tungstenite::Error> for ChatError {
+    fn from(e: tokio_tungstenite::tungstenite::Error) -> Self {
+        Self::ConnectionError(Box::new(e))
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -115,10 +121,7 @@ async fn connect_and_authorize(
     access_token: &str,
     username: &str,
     channel: &str,
-) -> Result<
-    WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
-    tokio_tungstenite::tungstenite::Error,
-> {
+) -> Result<WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>, ChatError> {
     let (mut ws_stream, _) = connect_async(url)
         .instrument(tracing::info_span!("irc_connect"))
         .await?;
@@ -150,7 +153,13 @@ enum MessageError {
     #[error(transparent)]
     VstcError(#[from] vstc::VstcError),
     #[error(transparent)]
-    ConnectionError(#[from] tokio_tungstenite::tungstenite::Error),
+    ConnectionError(Box<tokio_tungstenite::tungstenite::Error>),
+}
+
+impl From<tokio_tungstenite::tungstenite::Error> for MessageError {
+    fn from(e: tokio_tungstenite::tungstenite::Error) -> Self {
+        Self::ConnectionError(Box::new(e))
+    }
 }
 
 async fn process_message(

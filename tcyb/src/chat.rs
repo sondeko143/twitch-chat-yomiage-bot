@@ -91,7 +91,6 @@ where
 ///
 /// 取得の成功・失敗はハブの status に反映する。失敗してもループは続き、次の周期で
 /// 再試行する。トークンは `store` を yomiage と共有する。
-#[allow(dead_code)] // read-chat から起動する配線は次の task で入る。
 pub async fn chatters_poll_loop(
     hub: FeedHub,
     store: SharedStore,

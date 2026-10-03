@@ -16,6 +16,33 @@ pub struct Settings {
     pub translate_command: String,
     #[serde(default)]
     pub notification_speech: Vec<NotificationSpeech>,
+    #[serde(default)]
+    pub monitor: MonitorSettings,
+}
+
+/// `read-chat` のローカル配信口（`[monitor]`）。省略したキーは既定値になる。
+#[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
+#[serde(default)]
+pub struct MonitorSettings {
+    /// 配信口と視聴者一覧の周期取得を起動するか。
+    pub enabled: bool,
+    /// `127.0.0.1` で待ち受けるポート。
+    pub port: u16,
+    /// コメントと通知それぞれの保持件数。
+    pub history_size: usize,
+    /// 視聴者一覧を取得する間隔（秒）。
+    pub chatters_interval_secs: u64,
+}
+
+impl Default for MonitorSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            port: 8765,
+            history_size: 500,
+            chatters_interval_secs: 60,
+        }
+    }
 }
 
 /// 通知の種別ごとの読み上げテンプレート（`[[notification_speech]]`）。
@@ -51,6 +78,13 @@ translate_command = "translate"
 [[notification_speech]]
 type = "channel.follow"
 template = "{user_name} さん。フォローありがとうございます。"
+
+# ローカル配信口（tcyb monitor 用）。enabled = true で ws://127.0.0.1:<port>/feed を開く
+# [monitor]
+# enabled = false
+# port = 8765
+# history_size = 500            # コメントと通知それぞれの保持件数
+# chatters_interval_secs = 60   # 視聴者一覧の取得間隔
 "#;
 
 pub fn scaffold_config(config_file: &Path) -> anyhow::Result<()> {
@@ -239,6 +273,46 @@ template = \"b\"
                     template: "b".into()
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn load_defaults_monitor_when_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = write_config(dir.path(), FULL_CONFIG);
+        let s = load_locked(&cfg, None, Path::new("/d")).unwrap();
+        assert_eq!(
+            s.monitor,
+            MonitorSettings {
+                enabled: false,
+                port: 8765,
+                history_size: 500,
+                chatters_interval_secs: 60,
+            }
+        );
+    }
+
+    #[test]
+    fn load_reads_monitor_table_and_fills_missing_keys_with_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = format!(
+            "{}
+[monitor]
+enabled = true
+port = 9000
+",
+            FULL_CONFIG
+        );
+        let cfg = write_config(dir.path(), &body);
+        let s = load_locked(&cfg, None, Path::new("/d")).unwrap();
+        assert_eq!(
+            s.monitor,
+            MonitorSettings {
+                enabled: true,
+                port: 9000,
+                history_size: 500,
+                chatters_interval_secs: 60,
+            }
         );
     }
 

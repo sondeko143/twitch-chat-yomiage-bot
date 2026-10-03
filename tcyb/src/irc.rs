@@ -1,3 +1,4 @@
+use crate::feed::{ChatLine, FeedHub, Link, LinkStatus};
 use futures_util::{SinkExt, StreamExt};
 use lazy_static::lazy_static;
 use log::{info, warn};
@@ -30,18 +31,33 @@ impl From<tokio_tungstenite::tungstenite::Error> for ChatError {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+/// 受けたチャットの行き先（読み上げ・翻訳返信・配信口）。
+#[derive(Clone)]
+pub struct ChatOutputs {
+    pub speech_address: String,
+    pub operations: Vec<String>,
+    pub translate_command: String,
+    /// 配信口のハブ。`None` なら配信しない。
+    pub hub: Option<FeedHub>,
+}
+
 pub async fn read_chat_client_loop(
     url: Url,
     access_token: String,
     username: String,
     channel: String,
-    address: String,
-    operations: Vec<String>,
+    outputs: ChatOutputs,
     timeout_sec: u64,
-    translate_command: String,
 ) -> Result<(), ChatError> {
+    // このループが終わる（abort を含む）と disconnected になる
+    let status = outputs
+        .hub
+        .clone()
+        .map(|hub| LinkStatus::connecting(hub, Link::Irc));
     let mut ws_stream = connect_and_authorize(&url, &access_token, &username, &channel).await?;
+    if let Some(status) = &status {
+        status.connected();
+    }
     crate::profiling::mark_ready(crate::profiling::Component::Irc);
     let idle_timeout = std::time::Duration::from_secs(timeout_sec);
     let mut ping_interval =
@@ -65,11 +81,9 @@ pub async fn read_chat_client_loop(
                         if let Err(e) = process_message(
                             &mut ws_stream,
                             msg,
-                            &address,
-                            &operations,
+                            &outputs,
                             &username,
                             &channel,
-                            &translate_command,
                         )
                         .await
                         {
@@ -165,17 +179,17 @@ impl From<tokio_tungstenite::tungstenite::Error> for MessageError {
 async fn process_message(
     ws_stream: &mut WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
     msg: Message,
-    address: &str,
-    operations: &[String],
+    outputs: &ChatOutputs,
     username: &str,
     channel: &str,
-    translate_command: &str,
 ) -> Result<(), MessageError> {
     if msg.is_text() || msg.is_binary() {
         let msg_str = msg.into_text()?;
         let irc_message = parse_message(&msg_str);
         match irc_message.kind {
             IrcMessageKind::Chat => {
+                // 読み上げより先に、待たずに配信する
+                publish_chat(outputs.hub.as_ref(), &irc_message);
                 let chat_msg = irc_message.chat_msg.unwrap_or_default();
                 let user = irc_message.user.unwrap_or_default();
                 if user != username {
@@ -185,7 +199,12 @@ async fn process_message(
                         chat_msg.as_str(),
                         irc_message.channel.unwrap_or_default().as_str(),
                     );
-                    send_chat_message_to_speak(chat_msg.as_str(), address, operations).await?;
+                    send_chat_message_to_speak(
+                        chat_msg.as_str(),
+                        &outputs.speech_address,
+                        &outputs.operations,
+                    )
+                    .await?;
                     let msg_id = irc_message.msg_id.unwrap_or_default();
                     let (cleaned, emotes) =
                         split_message_emotes(&chat_msg, &irc_message.emote_ranges);
@@ -199,7 +218,7 @@ async fn process_message(
                         return Ok(());
                     }
 
-                    let translate_fut = Command::new(translate_command)
+                    let translate_fut = Command::new(&outputs.translate_command)
                         .args([cleaned.as_str()])
                         .kill_on_drop(true)
                         .output();
@@ -252,6 +271,34 @@ async fn process_message(
         }
     } else {
         Ok(())
+    }
+}
+
+/// 受けたチャットを配信口用の 1 行にする。チャット以外は `None`。
+fn chat_line(message: &IrcMessage, received_at: chrono::DateTime<chrono::Utc>) -> Option<ChatLine> {
+    let IrcMessageKind::Chat = message.kind else {
+        return None;
+    };
+    let user_login = message.user.clone().unwrap_or_default();
+    let display_name = match message.display_name.as_deref() {
+        Some(name) if !name.is_empty() => name.to_string(),
+        _ => user_login.clone(),
+    };
+    Some(ChatLine {
+        received_at,
+        user_login,
+        display_name,
+        text: message.chat_msg.clone().unwrap_or_default(),
+        color: message.color.clone().filter(|c| !c.is_empty()),
+    })
+}
+
+/// チャットをハブへ送る。ハブの送信は購読者の有無や遅れに関係なく待たない。
+fn publish_chat(hub: Option<&FeedHub>, message: &IrcMessage) {
+    if let Some(hub) = hub {
+        if let Some(line) = chat_line(message, chrono::Utc::now()) {
+            hub.send_chat(line);
+        }
     }
 }
 
@@ -364,6 +411,8 @@ struct IrcMessage {
     user: Option<String>,
     channel: Option<String>,
     emote_ranges: Vec<(usize, usize)>,
+    display_name: Option<String>,
+    color: Option<String>,
 }
 
 fn find_tag<'a>(tags: &'a str, name: &str) -> Option<&'a str> {
@@ -395,6 +444,8 @@ fn parse_message(msg_str: &str) -> IrcMessage {
                 channel: Some(caps["channel"].into()),
                 user: Some(caps["user"].into()),
                 emote_ranges,
+                display_name: find_tag(tags, "display-name").map(Into::into),
+                color: find_tag(tags, "color").map(Into::into),
             };
         }
     } else if LOGIN_FAILED_PTN.is_match(msg_str) {
@@ -476,6 +527,133 @@ mod tests {
             "@badge-info=;badges=broadcaster/1;client-nonce=c047bc731be346ced547db43b626c763;color=#151538;display-name=解樹形図_祈;emotes=;first-msg=0;flags=;id=370397f6-fd48-4190-bdf2-c8547a048df8;mod=0;returning-chatter=0;room-id=173660453;subscriber=0;tmi-sent-ts=1716111351803;turbo=0;user-id=173660453;user-type= :testuser!somthing@something.tmi.twitch.tv PRIVMSG #somechannel :hello :)",
         );
         assert_eq!(message.chat_msg.unwrap().as_str(), "hello :)");
+    }
+
+    #[test]
+    fn parse_message_extracts_display_name_and_color() {
+        let message = parse_message(
+            "@color=#151538;display-name=解樹形図_祈;emotes=;id=abc :testuser!u@u.tmi.twitch.tv PRIVMSG #chan :hello",
+        );
+        assert_eq!(message.display_name.as_deref(), Some("解樹形図_祈"));
+        assert_eq!(message.color.as_deref(), Some("#151538"));
+    }
+
+    #[test]
+    fn chat_line_uses_tags_for_display_name_and_color() {
+        let at = chrono::DateTime::from_timestamp(10, 0).unwrap();
+        let message = parse_message(
+            "@color=#FF0000;display-name=Taro;id=abc :taro!u@u.tmi.twitch.tv PRIVMSG #chan :hi there",
+        );
+        assert_eq!(
+            chat_line(&message, at),
+            Some(ChatLine {
+                received_at: at,
+                user_login: "taro".into(),
+                display_name: "Taro".into(),
+                text: "hi there".into(),
+                color: Some("#FF0000".into()),
+            })
+        );
+    }
+
+    #[test]
+    fn chat_line_falls_back_to_login_and_no_color_when_tags_are_empty() {
+        let at = chrono::DateTime::from_timestamp(10, 0).unwrap();
+        let message =
+            parse_message("@color=;display-name=;id=abc :taro!u@u.tmi.twitch.tv PRIVMSG #chan :hi");
+        let line = chat_line(&message, at).unwrap();
+        assert_eq!(line.display_name, "taro");
+        assert_eq!(line.color, None);
+    }
+
+    #[test]
+    fn chat_line_is_none_for_non_chat_messages() {
+        let at = chrono::DateTime::from_timestamp(10, 0).unwrap();
+        assert_eq!(chat_line(&parse_message("PING :tmi.twitch.tv"), at), None);
+    }
+
+    /// 購読者がいない・受信が止まっているハブへの送信が、チャット処理を待たせない。
+    #[tokio::test]
+    async fn publishing_chat_does_not_wait_for_absent_or_stalled_subscribers() {
+        let message =
+            parse_message("@display-name=Taro;id=abc :taro!u@u.tmi.twitch.tv PRIVMSG #chan :hi");
+        let no_subscriber = FeedHub::new(5);
+        let stalled = FeedHub::new(5);
+        let (_, _never_read) = stalled.subscribe();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            for _ in 0..10_000 {
+                publish_chat(Some(&no_subscriber), &message);
+                publish_chat(Some(&stalled), &message);
+            }
+            publish_chat(None, &message);
+        })
+        .await
+        .expect("publishing must not wait on subscribers");
+        assert_eq!(stalled.subscribe().0.chats.len(), 5);
+    }
+
+    /// ローカルの IRC 風 WebSocket サーバに繋ぎ、接続状態とチャットがハブに反映される。
+    #[tokio::test]
+    async fn read_chat_loop_reports_status_and_chat_to_hub() {
+        use crate::feed::ConnectionState;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (connected_tx, connected_rx) = tokio::sync::oneshot::channel::<()>();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
+        let server = tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+            // PASS / NICK / JOIN / CAP を読み捨てる
+            for _ in 0..4 {
+                ws.next().await.unwrap().unwrap();
+            }
+            connected_tx.send(()).unwrap();
+            release_rx.await.unwrap();
+            ws.send(Message::Text(
+                "@color=#00FF00;display-name=Hanako;id=x :hanako!h@h.tmi.twitch.tv PRIVMSG #chan :yo"
+                    .into(),
+            ))
+            .await
+            .unwrap();
+            ws.close(None).await.unwrap();
+            // クライアント側が閉じるまで読む
+            while let Some(Ok(_)) = ws.next().await {}
+        });
+
+        let hub = FeedHub::new(10);
+        let client = tokio::spawn(read_chat_client_loop(
+            Url::parse(&format!("ws://{addr}")).unwrap(),
+            "token".into(),
+            "bot".into(),
+            "chan".into(),
+            ChatOutputs {
+                speech_address: "http://127.0.0.1:1".into(),
+                operations: vec![],
+                translate_command: "tcyb-nonexistent-translate-command".into(),
+                hub: Some(hub.clone()),
+            },
+            30,
+        ));
+
+        connected_rx.await.unwrap();
+        let (snap, _) = hub.subscribe();
+        assert_eq!(snap.status.irc, ConnectionState::Connected);
+
+        release_tx.send(()).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(10), client)
+            .await
+            .expect("loop ends when the server closes")
+            .unwrap()
+            .unwrap();
+        server.await.unwrap();
+
+        let (snap, _) = hub.subscribe();
+        assert_eq!(snap.status.irc, ConnectionState::Disconnected);
+        assert_eq!(snap.chats.len(), 1);
+        assert_eq!(snap.chats[0].user_login, "hanako");
+        assert_eq!(snap.chats[0].display_name, "Hanako");
+        assert_eq!(snap.chats[0].text, "yo");
+        assert_eq!(snap.chats[0].color.as_deref(), Some("#00FF00"));
     }
 
     #[test]

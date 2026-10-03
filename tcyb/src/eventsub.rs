@@ -1,4 +1,5 @@
 use crate::api::{desired_subscriptions, sub_event};
+use crate::feed::LinkStatus;
 use crate::notification::render_speech;
 use crate::settings::NotificationSpeech;
 use futures_util::{SinkExt, StreamExt};
@@ -50,11 +51,16 @@ pub async fn sub_event_client_loop(
     notification_speech: Vec<NotificationSpeech>,
     timeout_sec: u64,
     sink: Option<NotificationSink>,
+    // 接続状態の報告。このループが終わる（abort を含む）と捨てられ disconnected になる
+    status: Option<LinkStatus>,
 ) -> Result<(), EventSubError> {
     info!("connect event sub");
     let (mut ws_stream, _) = connect_async(url)
         .instrument(tracing::info_span!("event_connect"))
         .await?;
+    if let Some(status) = &status {
+        status.connected();
+    }
     while let Ok(Some(msg)) = tokio::time::timeout(
         std::time::Duration::from_secs(timeout_sec),
         ws_stream.next(),

@@ -61,11 +61,11 @@ fn field_text(event: &Value, path: &str) -> String {
     let found = path.split('.').try_fold(event, |v, key| v.get(key));
     match found {
         Some(Value::String(s)) => s.clone(),
-        Some(other) => other.to_string(),
-        None => {
+        Some(Value::Null) | None => {
             log::warn!("notification template field not found: {path}");
             String::new()
         }
+        Some(other) => other.to_string(),
     }
 }
 
@@ -111,14 +111,14 @@ mod tests {
     }
 
     #[test]
-    fn non_string_values_use_json_notation() {
-        let tpl = [t("x", None, "{viewers}/{ok}/{nothing}")];
+    fn non_string_values_use_json_notation_and_null_is_empty() {
+        let tpl = [t("x", None, "{viewers}/{ok}/[{nothing}]")];
         let got = render_speech(
             &tpl,
             "x",
             &json!({"viewers": 42, "ok": true, "nothing": null}),
         );
-        assert_eq!(got.as_deref(), Some("42/true/null"));
+        assert_eq!(got.as_deref(), Some("42/true/[]"));
     }
 
     #[test]

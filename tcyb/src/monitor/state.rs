@@ -229,7 +229,8 @@ impl MonitorState {
         self.focus = self.focus.next();
     }
 
-    /// フォーカス中の欄を `delta` 行動かす（負で上）。動かした後は追従しない。
+    /// フォーカス中の欄を `delta` 行動かす（負で上）。動かした後は追従しないが、
+    /// 末尾に追従する欄で一番下まで下げたら追従に戻る。
     pub fn scroll_by(&mut self, delta: isize) {
         let pane = self.focus;
         let current = self.top(pane);
@@ -237,7 +238,11 @@ impl MonitorState {
             .len(pane)
             .saturating_sub(self.scrolls[pane.index()].height);
         let next = current.saturating_add_signed(delta).min(max_top);
-        self.scrolls[pane.index()].top = Some(next);
+        self.scrolls[pane.index()].top = if pane.follows_bottom() && next >= max_top {
+            None
+        } else {
+            Some(next)
+        };
     }
 
     /// フォーカス中の欄を 1 画面ぶん動かす（`pages` が負で上）。
@@ -504,8 +509,27 @@ pub(super) mod tests {
         assert_eq!(state.top(Pane::Chat), 0);
         state.scroll_by(1000);
         assert_eq!(state.top(Pane::Chat), 16);
-        // 末尾まで下げても End までは追従しない
+        // 一番下まで下げたら追従に戻る
+        assert!(!state.is_scrolled(Pane::Chat));
+    }
+
+    #[test]
+    fn scrolling_down_while_following_keeps_following() {
+        let mut state = MonitorState::new(100);
+        state.set_viewport(Pane::Chat, 4);
+        state.apply(snapshot_with_chats(1..=20));
+        state.scroll_by(1);
+        assert!(!state.is_scrolled(Pane::Chat));
+        state.scroll_pages(1);
+        assert!(!state.is_scrolled(Pane::Chat));
+        state.apply(FeedMessage::Chat(chat(21)));
+        assert_eq!(state.top(Pane::Chat), 17);
+        // 上げてから途中まで下げた間は追従しない
+        state.scroll_by(-5);
+        state.scroll_by(2);
         assert!(state.is_scrolled(Pane::Chat));
+        state.scroll_by(100);
+        assert!(!state.is_scrolled(Pane::Chat));
     }
 
     #[test]

@@ -79,7 +79,7 @@ impl FeedHub {
         self.broadcast(FeedMessage::Chatters(chatters));
     }
 
-    #[allow(dead_code)] // 受信側（monitor）の task で使う
+    #[cfg(test)]
     pub fn send_status(&self, status: Status) {
         self.update_status(|s| *s = status);
     }

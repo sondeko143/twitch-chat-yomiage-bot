@@ -6,7 +6,8 @@
 use crate::feed::{FeedHub, FeedMessage, FeedRecvError};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
-use axum::response::Response;
+use axum::http::{header, HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
 use log::{info, warn};
@@ -46,11 +47,46 @@ pub async fn start(port: u16, hub: FeedHub) -> Option<JoinHandle<()>> {
 
 /// `listener` で配信口を動かす。
 pub async fn serve(listener: TcpListener, hub: FeedHub) -> std::io::Result<()> {
-    let app = Router::new().route(FEED_PATH, get(upgrade)).with_state(hub);
+    let port = listener.local_addr()?.port();
+    let state = AppState {
+        hub,
+        host: format!("127.0.0.1:{port}"),
+    };
+    let app = Router::new()
+        .route(FEED_PATH, get(upgrade))
+        .with_state(state);
     axum::serve(listener, app).await
 }
 
-async fn upgrade(ws: WebSocketUpgrade, State(hub): State<FeedHub>) -> Response {
+#[derive(Clone)]
+struct AppState {
+    hub: FeedHub,
+    /// 受け付ける `Host` ヘッダの値（DNS rebinding 対策）。
+    host: String,
+}
+
+/// ブラウザ由来（`Origin` あり）や `Host` が違う要求を弾く。`tcyb monitor` は `Origin` を送らず、
+/// `Host` は `127.0.0.1:<port>` になる。
+fn is_allowed(headers: &HeaderMap, expected_host: &str) -> bool {
+    if headers.contains_key(header::ORIGIN) {
+        return false;
+    }
+    headers
+        .get(header::HOST)
+        .and_then(|h| h.to_str().ok())
+        .is_some_and(|h| h == expected_host)
+}
+
+async fn upgrade(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ws: WebSocketUpgrade,
+) -> Response {
+    if !is_allowed(&headers, &state.host) {
+        warn!("monitor: rejected a feed request (unexpected Origin or Host)");
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let hub = state.hub;
     ws.on_upgrade(move |socket| stream_feed(socket, hub))
 }
 
@@ -138,6 +174,40 @@ mod tests {
             .await
             .unwrap()
             .0
+    }
+
+    async fn connect_with(
+        port: u16,
+        header: (&'static str, &str),
+    ) -> tokio_tungstenite::tungstenite::Error {
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+        let mut req = format!("ws://127.0.0.1:{port}{FEED_PATH}")
+            .into_client_request()
+            .unwrap();
+        req.headers_mut()
+            .insert(header.0, header.1.parse().unwrap());
+        connect_async(req).await.unwrap_err()
+    }
+
+    fn assert_forbidden(err: tokio_tungstenite::tungstenite::Error) {
+        match err {
+            tokio_tungstenite::tungstenite::Error::Http(res) => {
+                assert_eq!(res.status(), 403);
+            }
+            other => panic!("expected an HTTP 403, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn request_with_an_origin_is_refused() {
+        let port = spawn_server(FeedHub::new(5)).await;
+        assert_forbidden(connect_with(port, ("Origin", "http://evil.example")).await);
+    }
+
+    #[tokio::test]
+    async fn request_with_a_wrong_host_is_refused() {
+        let port = spawn_server(FeedHub::new(5)).await;
+        assert_forbidden(connect_with(port, ("Host", "evil.example:80")).await);
     }
 
     async fn next_message(client: &mut Client) -> FeedMessage {

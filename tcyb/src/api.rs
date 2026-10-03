@@ -203,26 +203,69 @@ pub struct Chatter {
     pub user_name: String,
 }
 
+/// Get Chatters の 1 ページ分。`pagination.cursor` が無ければ最終ページ。
+#[derive(Deserialize)]
+struct ChattersPage {
+    data: Vec<Chatter>,
+    #[serde(default)]
+    pagination: Option<Pagination>,
+}
+
+/// Get Chatters の 1 ページあたりの最大件数（Twitch の上限）。
+const CHATTERS_PAGE_SIZE: &str = "1000";
+
+/// `pagination.cursor` が返る限り `after` を付けて辿り、全員を集める。
 pub async fn get_chatters(
     broadcaster_id: &str,
     operator_id: &str,
     access_token: &str,
     client_id: &str,
 ) -> Result<Chatters, reqwest::Error> {
-    let headers = auth_headers(access_token, client_id);
-    let res: Chatters = HTTP_CLIENT
-        .get(TWITCH_CHATTERS_API_URL)
-        .headers(headers)
-        .query(&[
+    get_chatters_from(
+        TWITCH_CHATTERS_API_URL,
+        broadcaster_id,
+        operator_id,
+        access_token,
+        client_id,
+    )
+    .await
+}
+
+async fn get_chatters_from(
+    url: &str,
+    broadcaster_id: &str,
+    operator_id: &str,
+    access_token: &str,
+    client_id: &str,
+) -> Result<Chatters, reqwest::Error> {
+    let mut all = Vec::new();
+    let mut after: Option<String> = None;
+    loop {
+        let mut query = vec![
             ("broadcaster_id", broadcaster_id),
             ("moderator_id", operator_id),
-        ])
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
-    Ok(res)
+            ("first", CHATTERS_PAGE_SIZE),
+        ];
+        if let Some(cursor) = after.as_deref() {
+            query.push(("after", cursor));
+        }
+        let page: ChattersPage = HTTP_CLIENT
+            .get(url)
+            .headers(auth_headers(access_token, client_id))
+            .query(&query)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        all.extend(page.data);
+        match page.pagination.and_then(|p| p.cursor) {
+            Some(cursor) if !cursor.is_empty() && after.as_deref() != Some(cursor.as_str()) => {
+                after = Some(cursor);
+            }
+            _ => return Ok(Chatters { data: all }),
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize)]
@@ -271,52 +314,72 @@ pub async fn get_followed(
     Ok(res)
 }
 
-#[derive(Deserialize, Serialize)]
-struct EventSubSubscription<'a> {
+#[derive(Serialize, Debug, PartialEq)]
+pub struct EventSubSubscription {
     #[serde(rename = "type")]
-    type_: &'a str,
-    version: &'a str,
-    #[serde(borrow)]
-    condition: EventSubCondition<'a>,
-    #[serde(borrow)]
-    transport: EventSubTransport<'a>,
+    pub type_: &'static str,
+    pub version: &'static str,
+    pub condition: serde_json::Value,
+    pub transport: EventSubTransport,
 }
 
-#[derive(Serialize, Deserialize)]
-struct EventSubCondition<'a> {
-    broadcaster_user_id: &'a str,
-    moderator_user_id: &'a str,
+#[derive(Serialize, Debug, PartialEq)]
+pub struct EventSubTransport {
+    pub method: &'static str,
+    pub session_id: String,
 }
 
-#[derive(Serialize, Deserialize)]
-struct EventSubTransport<'a> {
-    method: &'a str,
-    session_id: &'a str,
+/// セッション開始時に購読する EventSub の一覧を組む。
+///
+/// `broadcaster_id` は設定の `channel` から解決した配信者の ID、`bot_id` は bot
+/// アカウントの ID（moderator / 読み取りユーザ）。
+pub fn desired_subscriptions(
+    broadcaster_id: &str,
+    bot_id: &str,
+    session_id: &str,
+) -> Vec<EventSubSubscription> {
+    let transport = || EventSubTransport {
+        method: "websocket",
+        session_id: session_id.to_string(),
+    };
+    vec![
+        EventSubSubscription {
+            type_: "channel.follow",
+            version: "2",
+            condition: serde_json::json!({
+                "broadcaster_user_id": broadcaster_id,
+                "moderator_user_id": bot_id,
+            }),
+            transport: transport(),
+        },
+        EventSubSubscription {
+            type_: "channel.raid",
+            version: "1",
+            condition: serde_json::json!({ "to_broadcaster_user_id": broadcaster_id }),
+            transport: transport(),
+        },
+        EventSubSubscription {
+            type_: "channel.chat.notification",
+            version: "1",
+            condition: serde_json::json!({
+                "broadcaster_user_id": broadcaster_id,
+                "user_id": bot_id,
+            }),
+            transport: transport(),
+        },
+    ]
 }
 
 pub async fn sub_event(
-    operator_id: &str,
-    session_id: &str,
+    sub: &EventSubSubscription,
     access_token: &str,
     client_id: &str,
 ) -> Result<String, reqwest::Error> {
     let headers = auth_headers(access_token, client_id);
-    let sub = EventSubSubscription {
-        type_: "channel.follow",
-        version: "2",
-        condition: EventSubCondition {
-            broadcaster_user_id: operator_id,
-            moderator_user_id: operator_id,
-        },
-        transport: EventSubTransport {
-            method: "websocket",
-            session_id,
-        },
-    };
     let res = HTTP_CLIENT
         .post(TWITCH_SUB_EVENT_API_URL)
         .headers(headers)
-        .json(&sub)
+        .json(sub)
         .send()
         .await?
         .error_for_status()?
@@ -339,7 +402,8 @@ fn auth_headers(access_token: &str, client_id: &str) -> HeaderMap {
 
 #[cfg(test)]
 mod tests {
-    use super::build_http_client;
+    use super::{build_http_client, desired_subscriptions, get_chatters_from};
+    use serde_json::json;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
@@ -429,5 +493,146 @@ mod tests {
             sent.is_err(),
             "副作用のある POST は張り直さずエラーを返すはず"
         );
+    }
+
+    /// リクエスト行（`GET /path?query HTTP/1.1`）を返しつつヘッダ終端まで読む。
+    async fn read_request_line(conn: &mut TcpStream) -> Option<String> {
+        let mut seen: Vec<u8> = Vec::new();
+        let mut byte = [0u8; 1];
+        while conn.read_exact(&mut byte).await.is_ok() {
+            seen.push(byte[0]);
+            if seen.ends_with(b"\r\n\r\n") {
+                let text = String::from_utf8_lossy(&seen).into_owned();
+                return text.lines().next().map(str::to_string);
+            }
+        }
+        None
+    }
+
+    /// `after` の値に応じたページを返す Get Chatters のモック。受けたリクエスト行を記録する。
+    async fn serve_chatters_pages(
+        listener: TcpListener,
+        pages: Vec<(Option<&'static str>, serde_json::Value)>,
+        log: Arc<std::sync::Mutex<Vec<String>>>,
+    ) {
+        while let Ok((mut conn, _)) = listener.accept().await {
+            let pages = pages.clone();
+            let log = Arc::clone(&log);
+            tokio::spawn(async move {
+                while let Some(line) = read_request_line(&mut conn).await {
+                    log.lock().unwrap().push(line.clone());
+                    let after = line
+                        .split(['?', '&', ' '])
+                        .find_map(|kv| kv.strip_prefix("after="))
+                        .map(str::to_string);
+                    let body = pages
+                        .iter()
+                        .find(|(key, _)| key.map(str::to_string) == after)
+                        .map(|(_, body)| body.to_string())
+                        .unwrap_or_else(|| "{}".to_string());
+                    let res = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    if conn.write_all(res.as_bytes()).await.is_err() {
+                        return;
+                    }
+                }
+            });
+        }
+    }
+
+    fn chatter_json(login: &str) -> serde_json::Value {
+        json!({"user_id": format!("{login}-id"), "user_login": login, "user_name": login})
+    }
+
+    #[tokio::test]
+    async fn get_chatters_follows_cursor_across_pages_and_collects_everyone() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let pages = vec![
+            (
+                None,
+                json!({"data": [chatter_json("a"), chatter_json("b")], "pagination": {"cursor": "c1"}}),
+            ),
+            (
+                Some("c1"),
+                json!({"data": [chatter_json("c")], "pagination": {"cursor": "c2"}}),
+            ),
+            (
+                Some("c2"),
+                json!({"data": [chatter_json("d")], "pagination": {}}),
+            ),
+        ];
+        let _server = tokio::spawn(serve_chatters_pages(listener, pages, Arc::clone(&log)));
+
+        let got = within(
+            "get_chatters",
+            get_chatters_from(&format!("http://{addr}/"), "b1", "m1", "tok", "cid"),
+        )
+        .await
+        .unwrap();
+
+        let logins: Vec<_> = got.data.iter().map(|c| c.user_login.as_str()).collect();
+        assert_eq!(logins, ["a", "b", "c", "d"]);
+        let requests = log.lock().unwrap().clone();
+        assert_eq!(requests.len(), 3, "{requests:?}");
+        assert!(!requests[0].contains("after="), "{}", requests[0]);
+        assert!(requests[1].contains("after=c1"), "{}", requests[1]);
+        assert!(requests[2].contains("after=c2"), "{}", requests[2]);
+    }
+
+    #[tokio::test]
+    async fn get_chatters_single_page_without_pagination_field_makes_one_request() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let pages = vec![(None, json!({"data": [chatter_json("a")]}))];
+        let _server = tokio::spawn(serve_chatters_pages(listener, pages, Arc::clone(&log)));
+
+        let got = within(
+            "get_chatters",
+            get_chatters_from(&format!("http://{addr}/"), "b1", "m1", "tok", "cid"),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(got.data.len(), 1);
+        assert_eq!(log.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn subscribes_follow_raid_and_chat_notification_for_the_channel() {
+        let subs = desired_subscriptions("chan1", "bot1", "sess");
+
+        let got: Vec<_> = subs
+            .iter()
+            .map(|s| (s.type_, s.version, s.condition.clone()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                (
+                    "channel.follow",
+                    "2",
+                    json!({"broadcaster_user_id": "chan1", "moderator_user_id": "bot1"})
+                ),
+                (
+                    "channel.raid",
+                    "1",
+                    json!({"to_broadcaster_user_id": "chan1"})
+                ),
+                (
+                    "channel.chat.notification",
+                    "1",
+                    json!({"broadcaster_user_id": "chan1", "user_id": "bot1"})
+                ),
+            ]
+        );
+        assert!(subs
+            .iter()
+            .all(|s| s.transport.method == "websocket" && s.transport.session_id == "sess"));
     }
 }

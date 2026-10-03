@@ -15,6 +15,9 @@ use std::net::ToSocketAddrs;
 use std::path::Path;
 use std::{net::SocketAddr, path::PathBuf};
 
+/// `auth-code` が要求するスコープ（空白区切り）。
+const SCOPES: &str = "chat:read chat:edit moderator:manage:banned_users channel:moderate moderator:read:chatters moderator:read:followers user:read:follows user:read:chat";
+
 pub async fn auth_code_grant(
     listen_addr: &str,
     db_dir: &Path,
@@ -86,10 +89,7 @@ async fn auth(State(state): State<ServerState>) -> impl IntoResponse {
         ("client_id", &state.client_id),
         ("redirect_uri", redirect_uri),
         ("response_type", "code"),
-        (
-            "scope",
-            "chat:read chat:edit moderator:manage:banned_users channel:moderate moderator:read:chatters moderator:read:followers user:read:follows",
-        ),
+        ("scope", SCOPES),
         ("force_verify", "true"),
         ("state", state_id),
     ];
@@ -143,4 +143,26 @@ async fn obtain_access_token(
         get_tokens_by_code(redirect_uri, code, client_id, client_secret).await?;
     crate::store::save_tokens(&db_dir, db_name, access_token, refresh_token)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SCOPES;
+
+    #[test]
+    fn scopes_include_chat_read_for_chat_notification_and_keep_existing() {
+        let scopes: Vec<&str> = SCOPES.split(' ').collect();
+        assert!(scopes.contains(&"user:read:chat"));
+        for kept in [
+            "chat:read",
+            "chat:edit",
+            "moderator:manage:banned_users",
+            "channel:moderate",
+            "moderator:read:chatters",
+            "moderator:read:followers",
+            "user:read:follows",
+        ] {
+            assert!(scopes.contains(&kept), "{kept} が落ちている");
+        }
+    }
 }

@@ -27,11 +27,16 @@ channel = "your_channel_name"
 username = "your_username"
 speech_address = "http://localhost:8080" # <https://github.com/sondeko143/vstreamer-tool> の待受アドレス
 operations = ["o:/transl?t=ja", "o:/tts?i=1&spd=1.1&pit=-0.05", "o:/play?v=18"]
-greeting_template = "user_name さん。フォローありがとうございます。" # フォロー通知の読み上げメッセージ
 translate_command = "translate" # 翻訳に使用する外部コマンド (第一引数に原文を渡し、標準出力を翻訳結果とする)
 # listen_address = "localhost:8000"    # 既定値あり。変更時のみ記入
 # db_dir / db_name は OS 標準データディレクトリを既定使用（変更時のみ記入）
+
+[[notification_speech]]
+type = "channel.follow"
+template = "{user_name} さん。フォローありがとうございます。"
 ```
+
+通知の読み上げ（`[[notification_speech]]`）と `[monitor]` は後述。
 
 ### 設定ファイルの明示指定・個別上書き
 
@@ -58,7 +63,7 @@ translate_command = "translate" # 翻訳に使用する外部コマンド (第�
    | `cb_username` | `username` |
    | `cb_speech_address` | `speech_address` |
    | `cb_operations`（カンマ区切り文字列） | `operations`（TOML 配列。例: `["o:/transl?t=ja", "o:/tts?i=1&spd=1.1&pit=-0.05"]`） |
-   | `cb_greeting_template` | `greeting_template` |
+   | `cb_greeting_template` | 廃止。`[[notification_speech]]` に書き換える（下記「通知の読み上げ」参照） |
    | `cb_translate_command` | `translate_command` |
    | `cb_db_dir` / `cb_db_name` | `db_dir` / `db_name`（省略可。`db_dir` の既定は OS 標準データディレクトリ、`db_name` の既定は `data.json`） |
    | `RUST_LOG`（`.env` 経由） | シェル環境変数の `RUST_LOG`（上記参照） |
@@ -73,13 +78,96 @@ cargo run -p tcyb -- auth-code
 
 実行するとブラウザが自動で開き、Twitch の認可画面へリダイレクトされる（`force_verify` 済みのためアカウント選択を求められる）。あとは画面の指示に従う。
 
-> **重要:** 認可は **対象チャンネルのモデレーター権限を持つ bot アカウント（設定の `username`）でブラウザにログインした状態**で行うこと。別のアカウントで認可すると、トークン自体は有効でも `moderator:read:chatters` / `moderator:read:followers` を要する操作（`show-chatters` の Get Chatters、`read-chat` の follow 購読など）が 401 / 403 になる。その場合はブラウザで bot アカウントにログインし直してから `auth-code` をやり直す。
+> **重要:** 認可は **対象チャンネルのモデレーター権限を持つ bot アカウント（設定の `username`）でブラウザにログインした状態**で行うこと。別のアカウントで認可すると、トークン自体は有効でも `moderator:read:chatters` / `moderator:read:followers` / `user:read:chat` を要する操作（`show-chatters` の Get Chatters、`read-chat` の follow・chat.notification 購読など）が 401 / 403 になる。その場合はブラウザで bot アカウントにログインし直してから `auth-code` をやり直す。
+
+> **移行時の注意:** `channel.chat.notification` の購読のために `auth-code` のスコープへ `user:read:chat` が加わった。以前に認可済みのトークンにはこのスコープが無いので、更新後に **`auth-code` で再認可を 1 回行う**こと（`refresh-token` ではスコープは増えない）。
 
 ### 起動
 
 ```sh
 cargo run -p tcyb -- read-chat
 ```
+
+### 通知の読み上げ
+
+`read-chat` は EventSub で次の 3 つを購読する（配信者は設定の `channel`、bot は `username` のアカウント）。
+
+| type | 内容 |
+| --- | --- |
+| `channel.follow` | フォロー |
+| `channel.raid` | レイド（`channel` が受ける側） |
+| `channel.chat.notification` | サブスク・リサブ・ギフト・レイド・アナウンスなど。種類は event の `notice_type`（`sub` / `resub` / `sub_gift` / `community_sub_gift` / `raid` / `announcement` / `bits_badge_tier` など）で区別される |
+
+読み上げる文面は `config.toml` の `[[notification_speech]]` に書く。要素ごとのキーは `type`（必須）、`notice_type`（任意）、`template`（必須）。
+
+```toml
+[[notification_speech]]
+type = "channel.follow"
+template = "{user_name} さん。フォローありがとうございます。"
+
+[[notification_speech]]
+type = "channel.raid"
+template = "{from_broadcaster_user_name} さんが {viewers} 人でレイドに来てくれました。"
+
+# notice_type を指定すると、その種類だけに使われる
+[[notification_speech]]
+type = "channel.chat.notification"
+notice_type = "sub"
+template = "{chatter_user_name} さん。サブスクありがとうございます。"
+
+# notice_type を省略した要素は、同じ type で他に一致する要素が無いときに使われる
+[[notification_speech]]
+type = "channel.chat.notification"
+template = "{system_message}"
+```
+
+- `type` が一致し `notice_type` も一致する要素が優先され、無ければ `notice_type` を省略した要素が使われる。どれにも一致しない通知は読み上げない。
+- `{name}` は通知 event の同名フィールドに、`{a.b}` はネストしたフィールドに置き換わる。`{{` は `{`、`}}` は `}` をそのまま出力する。存在しないフィールドは空文字になり、警告ログが出る。文字列でない値（数値など）は JSON の表記のまま読み上げる。
+- 読み上げの送り先は従来のフォロー読み上げと同じ（`speech_address` / `operations`）。
+- `[[notification_speech]]` は `config.toml`（と `--config` のファイル）でのみ指定できる。`cb_` 環境変数では上書きできない。
+
+> **注意（二重読み上げ）:** レイドは `channel.raid` と、`channel.chat.notification` の `notice_type = "raid"` の両方で届く。両方にテンプレートを書くと同じレイドを二重に読み上げるので、どちらか一方だけに書く。`notice_type` を省略した `channel.chat.notification` の要素もレイドに一致する点に注意。
+
+> **移行:** `greeting_template`（`cb_greeting_template` を含む）は廃止された。設定に残っていると、共有の設定読み込みが失敗するため `read-chat` だけでなく **すべてのサブコマンド（`auth-code` を含む）** がエラーで起動を中止する。`auth-code` を実行する前にも、このキーを削除するか上の `channel.follow` の例のように `[[notification_speech]]` へ書き換えること。
+>
+> また、`greeting_template` を一度も設定していなかった場合は、従来は組み込みの既定のフォロー挨拶が読み上げられていた。この変更後は `type = "channel.follow"` の `[[notification_speech]]` を追加するまでフォローは無言になり、エラーも表示されない。
+
+### 監視 TUI（`tcyb monitor`）
+
+配信中にコメント・通知・視聴者一覧を一望するための閲覧専用 TUI。`read-chat` が自分の中でローカル配信口を開き、`tcyb monitor` がそこへ別プロセスとして接続する。
+
+1. `config.toml` で配信口を有効にする（既定は無効）。
+
+   ```toml
+   [monitor]
+   enabled = true               # 既定 false
+   port = 8765                  # 既定 8765。127.0.0.1 でのみ待ち受ける
+   history_size = 500           # 既定 500。コメントと通知それぞれの保持件数
+   chatters_interval_secs = 60  # 既定 60。視聴者一覧を取得する間隔（秒）
+   ```
+
+2. `read-chat` を起動したまま、別の端末で `tcyb monitor` を起動する。`port` / `history_size` は同じ設定ファイルから読む（`--config` も使える）。
+
+   ```sh
+   cargo run -p tcyb -- monitor
+   ```
+
+画面は左にコメント（上）と通知（下）、右に視聴者、最下部に read-chat・IRC・EventSub・視聴者一覧の状態行が出る。接続直後に `read-chat` が保持している直近の履歴が表示され、以降はリアルタイムで追加される。視聴者欄では、接続後に新しく現れた視聴者に印が付く。
+
+| キー | 動作 |
+| --- | --- |
+| `q`（`Ctrl+C` も可） | 終了 |
+| `Tab` | フォーカスするペイン（コメント / 通知 / 視聴者）を切り替える |
+| `↑` / `↓` | フォーカス中のペインを 1 行スクロール |
+| `PageUp` / `PageDown` | フォーカス中のペインを 1 画面スクロール |
+| `End` | 最新への追従に戻る |
+
+- **TUI を閉じても、異常終了しても、`read-chat` の読み上げは止まらない。** TUI は閲覧専用で、`read-chat` は配信口の購読者の有無や遅さに左右されない。視聴者一覧の取得や配信口の起動に失敗しても読み上げは続き、失敗は状態行に出る。
+- `read-chat` が未起動・再起動中でも `monitor` は終了せず、0.5 秒から最大 10 秒まで間隔を延ばしながら再接続を試みる。再接続のたびに履歴が送り直される。
+- 履歴は `read-chat` のメモリ上だけにあり、`history_size` を超えた古い分と `read-chat` 再起動前の分は残らない。
+- 配信口に認証は無く、`127.0.0.1` 以外には公開しない。
+- `monitor` 実行中は端末を TUI が占有するため、ログ出力（`RUST_LOG`）は行われない。
+- 配信口は `ws://127.0.0.1:<port>/feed`（JSON、プロトコル版 `1`）。プロトコル版が違うと `monitor` は非互換と表示する（[ADR-0024](../docs/adr/0024-websocket-json-for-monitor-feed.md)）。
 
 ### 視聴者一覧の記録
 

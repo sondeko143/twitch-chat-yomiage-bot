@@ -67,4 +67,4 @@ spec 承認後、plan の手前で毎回判定する。1 つでも該当した�
 | [0025](0025-unify-notification-speech-templates-by-type.md) | 通知読み上げを種別ごとのテンプレート配列に統一し greeting_template を廃止する | Accepted | 2026-10-03 | [monitor TUI](../superpowers/specs/2026-10-03-tcyb-monitor-tui-design.md) |
 | [0026](0026-receive-sub-events-via-chat-notification.md) | サブスク等の通知は bot トークンで購読できる channel.chat.notification で受け取る | Accepted | 2026-10-03 | [monitor TUI](../superpowers/specs/2026-10-03-tcyb-monitor-tui-design.md) |
 | [0027](0027-cache-channel-id-in-store-and-extend-status-additively.md) | 配信チャンネル ID はトークンストアにキャッシュし、配信メッセージの状態は版を上げず任意フィールドで拡張する | Accepted | 2026-10-03 | — |
-| [0028](0028-read-chat-appends-chatters-log-to-configured-file.md) | 視聴者一覧の記録は read-chat が設定のパスへ show-chatters 書式で直接追記する | Proposed | 2026-10-07 | [read-chat 視聴者ログ](../superpowers/specs/2026-10-07-tcyb-read-chat-chatters-log-design.md) |
+| [0028](0028-read-chat-appends-chatters-log-to-configured-file.md) | 視聴者一覧の記録は read-chat が設定のパスへ show-chatters 書式で直接追記する | Accepted | 2026-10-07 | [read-chat 視聴者ログ](../superpowers/specs/2026-10-07-tcyb-read-chat-chatters-log-design.md) |

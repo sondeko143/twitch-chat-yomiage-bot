@@ -1,6 +1,6 @@
 # 0028. 視聴者一覧の記録は read-chat が設定のパスへ show-chatters 書式で直接追記する
 
-- Status: Proposed
+- Status: Accepted
 - 効力: 既定 — 却下理由はいずれも技術的な比較（記録の連続性・重複・起動方法への依存）で、時間都合ではない
 - Date: 2026-10-07
 - Related: [read-chat 視聴者ログ spec](../superpowers/specs/2026-10-07-tcyb-read-chat-chatters-log-design.md), [ADR-0019](0019-foreground-only-daemon-for-show-chatters.md), [ADR-0020](0020-interval-option-on-show-chatters.md), [ADR-0023](0023-separate-monitor-tui-via-local-feed-from-read-chat.md)

@@ -146,7 +146,10 @@ template = "{system_message}"
    port = 8765                  # 既定 8765。127.0.0.1 でのみ待ち受ける
    history_size = 500           # 既定 500。コメントと通知それぞれの保持件数
    chatters_interval_secs = 60  # 既定 60。視聴者一覧を取得する間隔（秒）
+   # chatters_log = "chatters.csv"  # 既定は未設定（記録しない）。視聴者一覧を取得のたびに追記するファイル
    ```
+
+   `chatters_log` の記録の仕様は「[視聴者一覧の記録](#視聴者一覧の記録)」を参照。
 
 2. `read-chat` を起動したまま、別の端末で `tcyb monitor` を起動する。`port` / `history_size` は同じ設定ファイルから読む（`--config` も使える）。
 
@@ -182,6 +185,8 @@ cargo run -p tcyb -- show-chatters
 
 `channel` と `username` を除いた結果が 0 人になっても行末のカンマは省略しない（例: `2026-08-09 00:00:00,`）ため、この行は常にタイムスタンプとカンマ以降の 2 フィールドとして読める。
 
+`read-chat` を `monitor.enabled = true` で動かしているなら、`monitor.chatters_log` で `read-chat` 自身に同じ書式で記録させることもできる（後述）。
+
 `--interval <SECS>` を付けると、起動直後に 1 行出したあと SECS 秒ごとに取得を繰り返す常駐モードになる。SECS は 1 以上の整数（秒）で、0 を渡すとエラーになる。
 
 ```powershell
@@ -195,3 +200,20 @@ cargo run -p tcyb -- show-chatters --interval 60 >> chatters.csv
 トークンが失効した場合（401）は自動でリフレッシュして同じ取得をやり直し、常駐は継続する。ただしリフレッシュ直後にも 401 が返った場合は再リフレッシュせずそのままプロセスを終了する（トークンの新鮮さが原因でない 401 とみなす）。401 以外のエラー（回線断・5xx・スコープ不足の 403 など）でも同様にプロセスがそのまま終了する。**自動では再起動しない**ので、長時間の無人記録では起動元の側で再実行を設定する。
 
 例外として、**応答が返らないまま接続が切れた場合だけは同じ tick 内で 1 回だけ取得をやり直す**。tick の間アイドルだった keep-alive 接続をサーバ側が先に捨てていると、次の取得がその接続を掴んで `os error 10054`（既存の接続はリモート ホストに強制的に切断されました）などで落ちるため。張り直しは副作用の無い GET に限り、2 回目も失敗すればこれまでどおりプロセスを終了する（[ADR-0022](../docs/adr/0022-retry-idempotent-gets-once-when-no-response-arrives.md)）。
+
+#### `read-chat` からの記録（`monitor.chatters_log`）
+
+`read-chat` を `monitor.enabled = true` で動かしているなら、`show-chatters --interval` を並走させなくても、`read-chat` が周期取得した視聴者一覧をファイルに残せる。`[monitor]` の `chatters_log` にパスを書くと、取得が成功するたびに 1 行追記する（省略時は記録しない）。
+
+```toml
+[monitor]
+enabled = true
+chatters_log = "chatters.csv"
+```
+
+- 行の書式は `show-chatters` と同一（ローカル時刻、`channel` と `username` を除いた login 名を昇順、0 人でも行末のカンマは残す）。既存の `chatters.csv` にもそのまま続けて追記できる。ファイルが無ければ作り、あれば末尾に足す。1 行ごとに flush する。
+- 取得の間隔は `chatters_interval_secs`。取得に失敗した周期は何も書かないので、その期間はファイル上で空白になる。
+- 相対パスは `read-chat` を起動したカレントディレクトリ基準。ローテーションはしない。ファイルが大きくなったら動かせば、次の周期で新しいファイルが作られる。
+- `monitor.enabled = false` のまま `chatters_log` を設定すると、`read-chat` は矛盾を示すエラーで起動を中止する。起動時に追記モードで開けないパスでも、OS のエラーとパスを示して中止する。この検査は `read-chat` の起動時だけで、`auth-code` など他のサブコマンドは同じ設定で従来どおり動く。
+- 稼働中の書き込み失敗では `read-chat` は止まらず、読み上げ・配信・次の周期の取得と記録を続ける。失敗は理由とパスつきで警告ログ（`warn`）に出る。
+- 配信口のプロトコルと TUI の表示は変わらない（[ADR-0028](../docs/adr/0028-read-chat-appends-chatters-log-to-configured-file.md)）。`show-chatters` は従来どおり標準出力のみで、ファイルへは書かない。

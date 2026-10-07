@@ -32,6 +32,8 @@ pub struct MonitorSettings {
     pub history_size: usize,
     /// 視聴者一覧を取得する間隔（秒）。
     pub chatters_interval_secs: u64,
+    /// 視聴者一覧を追記するログファイル。省略時は記録しない。相対パスは `read-chat` のカレントディレクトリ基準。
+    pub chatters_log: Option<PathBuf>,
 }
 
 impl Default for MonitorSettings {
@@ -41,6 +43,7 @@ impl Default for MonitorSettings {
             port: 8765,
             history_size: 500,
             chatters_interval_secs: 60,
+            chatters_log: None,
         }
     }
 }
@@ -85,6 +88,7 @@ template = "{user_name} さん。フォローありがとうございます。"
 # port = 8765
 # history_size = 500            # コメントと通知それぞれの保持件数
 # chatters_interval_secs = 60   # 視聴者一覧の取得間隔
+# chatters_log = "chatters.csv" # 視聴者一覧を取得のたびに追記するファイル（省略時は記録しない）
 "#;
 
 pub fn scaffold_config(config_file: &Path) -> anyhow::Result<()> {
@@ -167,6 +171,8 @@ mod tests {
         assert_eq!(s.client_id, "testid");
         assert_eq!(s.client_secret, "testsecret");
         assert_eq!(s.channel, "your_channel_name");
+        assert_eq!(s.monitor.chatters_log, None);
+        assert!(text.contains("# chatters_log = "), "{text}");
         assert_eq!(
             s.operations,
             vec![
@@ -288,7 +294,30 @@ template = \"b\"
                 port: 8765,
                 history_size: 500,
                 chatters_interval_secs: 60,
+                chatters_log: None,
             }
+        );
+    }
+
+    #[test]
+    fn load_reads_monitor_chatters_log_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = format!(
+            "{}
+[monitor]
+chatters_log = \"chatters.csv\"
+",
+            FULL_CONFIG
+        );
+        let cfg = write_config(dir.path(), &body);
+        let s = load_locked(&cfg, None, Path::new("/d")).unwrap();
+        assert_eq!(s.monitor.chatters_log, Some(PathBuf::from("chatters.csv")));
+        assert_eq!(
+            MonitorSettings {
+                chatters_log: None,
+                ..s.monitor
+            },
+            MonitorSettings::default()
         );
     }
 
@@ -312,6 +341,7 @@ port = 9000
                 port: 9000,
                 history_size: 500,
                 chatters_interval_secs: 60,
+                chatters_log: None,
             }
         );
     }

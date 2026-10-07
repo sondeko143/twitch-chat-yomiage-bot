@@ -1,3 +1,4 @@
+use crate::chatters_log::ChattersLog;
 use crate::feed::{self, FeedHub};
 use crate::{
     api,
@@ -7,16 +8,15 @@ use anyhow::bail;
 use log::warn;
 use std::{convert::Infallible, path::Path, time::Duration};
 
-fn format_chatters_line(
+/// `show-chatters` と `chatters_log` の 1 行（改行なし）。配信者と bot 自身を除いた login を昇順に並べる。
+pub(crate) fn format_chatters_line<'a>(
     now: chrono::NaiveDateTime,
-    chatters: &api::Chatters,
+    logins: impl IntoIterator<Item = &'a str>,
     channel_name: &str,
     username: &str,
 ) -> String {
-    let mut users: Vec<&str> = chatters
-        .data
-        .iter()
-        .map(|c| c.user_login.as_str())
+    let mut users: Vec<&str> = logins
+        .into_iter()
         .filter(|name| *name != channel_name && *name != username)
         .collect();
     users.sort_unstable();
@@ -87,12 +87,21 @@ where
     }
 }
 
-/// 視聴者一覧を `interval` ごとに取得してハブへ送る。終わらない（呼び出し側が abort する）。
+/// 周期取得した視聴者一覧の行き先。
+pub struct ChattersOutputs {
+    pub hub: FeedHub,
+    /// 取得に成功するたびに 1 行追記する先。`None` なら記録しない。
+    pub log: Option<ChattersLog>,
+}
+
+/// 視聴者一覧を `interval` ごとに取得してハブへ送る（`log` があれば追記もする）。
+/// 終わらない（呼び出し側が abort する）。
 ///
 /// 取得の成功・失敗はハブの status に反映する。失敗してもループは続き、次の周期で
-/// 再試行する。トークンは `store` を yomiage と共有する。
+/// 再試行する。追記の失敗は warn に出すだけで、配信もループも止めない。
+/// トークンは `store` を yomiage と共有する。
 pub async fn chatters_poll_loop(
-    hub: FeedHub,
+    outputs: ChattersOutputs,
     store: SharedStore,
     channel_user_id: String,
     user_id: String,
@@ -101,7 +110,7 @@ pub async fn chatters_poll_loop(
     client_secret: String,
 ) -> Infallible {
     let (client_id, channel_user_id, user_id) = (&client_id, &channel_user_id, &user_id);
-    poll_chatters(&hub, interval, || async {
+    poll_chatters(&outputs, interval, || async {
         let res =
             with_shared_token_refresh(&store, client_id, &client_secret, |token| async move {
                 api::get_chatters(channel_user_id, user_id, &token, client_id).await
@@ -119,7 +128,11 @@ pub async fn chatters_poll_loop(
     .await
 }
 
-async fn poll_chatters<F, Fut>(hub: &FeedHub, interval: Duration, mut fetch: F) -> Infallible
+async fn poll_chatters<F, Fut>(
+    outputs: &ChattersOutputs,
+    interval: Duration,
+    mut fetch: F,
+) -> Infallible
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<Vec<feed::Chatter>>>,
@@ -127,11 +140,15 @@ where
     let mut ticker = tokio::time::interval(interval.max(Duration::from_millis(1)));
     // 取得が間隔より長引いても、取りこぼした分をまとめて発火しない。
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let hub = &outputs.hub;
     loop {
         ticker.tick().await;
         let now = chrono::Utc::now();
         match fetch().await {
             Ok(chatters) => {
+                if let Some(log) = &outputs.log {
+                    append_chatters_log(log, now, &chatters);
+                }
                 hub.send_chatters(feed::Chatters {
                     fetched_at: now,
                     chatters,
@@ -146,6 +163,22 @@ where
                 hub.update_status(|s| s.chatters_last_error = Some(format!("{err:#}")));
             }
         }
+    }
+}
+
+/// 取得時刻をローカル時刻にして追記する。失敗は warn に出して捨てる（次の周期で再び試す）。
+fn append_chatters_log(
+    log: &ChattersLog,
+    fetched_at: chrono::DateTime<chrono::Utc>,
+    chatters: &[feed::Chatter],
+) {
+    let at = fetched_at.with_timezone(&chrono::Local).naive_local();
+    if let Err(err) = log.append(at, chatters.iter().map(|c| c.login.as_str())) {
+        warn!(
+            "chatters_log append failed ({}): {}",
+            log.path().display(),
+            err
+        );
     }
 }
 
@@ -314,7 +347,12 @@ async fn chatters_tick(
     let now = chrono::Local::now().naive_local();
     println!(
         "{}",
-        format_chatters_line(now, &res, channel_name, username)
+        format_chatters_line(
+            now,
+            res.data.iter().map(|c| c.user_login.as_str()),
+            channel_name,
+            username
+        )
     );
     Ok(())
 }
@@ -391,10 +429,13 @@ mod tests {
     use super::{
         format_chatters_line, get_user_with_retry, poll_chatters, resolve_channel_user_id_from,
         resolve_shared_channel_user_id_from, retry_transient, with_shared_token_refresh,
+        ChattersOutputs,
     };
     use crate::api::{Chatter, Chatters};
+    use crate::chatters_log::ChattersLog;
     use crate::feed::{self, FeedHub};
     use crate::store::{SharedStore, Store};
+    use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
@@ -428,6 +469,14 @@ mod tests {
         }
     }
 
+    fn logins(chatters: &Chatters) -> impl Iterator<Item = &str> {
+        chatters.data.iter().map(|c| c.user_login.as_str())
+    }
+
+    fn no_log(hub: FeedHub) -> ChattersOutputs {
+        ChattersOutputs { hub, log: None }
+    }
+
     fn at(h: u32, mi: u32, s: u32) -> chrono::NaiveDateTime {
         chrono::NaiveDate::from_ymd_opt(2026, 8, 9)
             .unwrap()
@@ -441,7 +490,7 @@ mod tests {
             data: vec![chatter("zoe"), chatter("alice"), chatter("bob")],
         };
 
-        let line = format_chatters_line(at(12, 34, 56), &chatters, "mychannel", "mybot");
+        let line = format_chatters_line(at(12, 34, 56), logins(&chatters), "mychannel", "mybot");
 
         assert_eq!(line, "2026-08-09 12:34:56,alice,bob,zoe");
     }
@@ -452,7 +501,7 @@ mod tests {
             data: vec![chatter("mychannel"), chatter("mybot"), chatter("viewer")],
         };
 
-        let line = format_chatters_line(at(0, 0, 0), &chatters, "mychannel", "mybot");
+        let line = format_chatters_line(at(0, 0, 0), logins(&chatters), "mychannel", "mybot");
 
         assert_eq!(line, "2026-08-09 00:00:00,viewer");
     }
@@ -463,7 +512,7 @@ mod tests {
             data: vec![chatter("mybot")],
         };
 
-        let line = format_chatters_line(at(0, 0, 0), &chatters, "mychannel", "mybot");
+        let line = format_chatters_line(at(0, 0, 0), logins(&chatters), "mychannel", "mybot");
 
         assert_eq!(line, "2026-08-09 00:00:00,");
     }
@@ -475,7 +524,7 @@ mod tests {
         let fetch = scripted(vec![Ok(vec![feed_chatter("a"), feed_chatter("b")])], calls);
         let task = tokio::spawn({
             let hub = hub.clone();
-            async move { poll_chatters(&hub, Duration::from_secs(60), fetch).await }
+            async move { poll_chatters(&no_log(hub), Duration::from_secs(60), fetch).await }
         });
 
         tokio::time::sleep(Duration::from_secs(1)).await;
@@ -505,7 +554,7 @@ mod tests {
         );
         let task = tokio::spawn({
             let hub = hub.clone();
-            async move { poll_chatters(&hub, Duration::from_secs(60), fetch).await }
+            async move { poll_chatters(&no_log(hub), Duration::from_secs(60), fetch).await }
         });
 
         tokio::time::sleep(Duration::from_secs(1)).await;
@@ -520,6 +569,121 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 2, "次の周期で再試行するはず");
         assert!(snap.status.chatters_last_success.is_some());
         assert_eq!(snap.status.chatters_last_error, None);
+        task.abort();
+    }
+
+    /// 追記先を持つ出力。ファイルは `dir` 直下の `sub/chatters.csv`。
+    fn outputs_with_log(hub: &FeedHub, dir: &std::path::Path) -> (ChattersOutputs, PathBuf) {
+        let sub = dir.join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        let path = sub.join("chatters.csv");
+        let log = ChattersLog::open(&path, "mychannel", "mybot").unwrap();
+        (
+            ChattersOutputs {
+                hub: hub.clone(),
+                log: Some(log),
+            },
+            path,
+        )
+    }
+
+    fn lines(path: &std::path::Path) -> Vec<String> {
+        std::fs::read_to_string(path)
+            .unwrap()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// `YYYY-MM-DD HH:MM:SS,` の後ろ（login の並び）を返す。時刻の書式も確かめる。
+    fn logins_part(line: &str) -> &str {
+        let (ts, rest) = line.split_once(',').expect("時刻の後にカンマがあるはず");
+        chrono::NaiveDateTime::parse_from_str(ts, "%Y-%m-%d %H:%M:%S")
+            .unwrap_or_else(|e| panic!("時刻の書式が違う: {ts:?}: {e}"));
+        rest
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn poll_success_appends_a_show_chatters_line_to_the_log() {
+        let hub = FeedHub::new(10);
+        let dir = tempfile::tempdir().unwrap();
+        let (outputs, path) = outputs_with_log(&hub, dir.path());
+        let fetched = ["zoe", "mychannel", "alice", "mybot"].map(feed_chatter);
+        let fetch = scripted(vec![Ok(fetched.to_vec())], Arc::new(AtomicUsize::new(0)));
+        let task =
+            tokio::spawn(
+                async move { poll_chatters(&outputs, Duration::from_secs(60), fetch).await },
+            );
+
+        tokio::time::sleep(Duration::from_secs(1)).await;
+
+        let logged = lines(&path);
+        assert_eq!(logged.len(), 1, "{logged:?}");
+        assert_eq!(logins_part(&logged[0]), "alice,zoe");
+        assert!(std::fs::read_to_string(&path).unwrap().ends_with('\n'));
+        // 配信口へは除外せずにそのまま流す（従来どおり）
+        let snap = hub.subscribe().0;
+        assert_eq!(
+            snap.chatters.expect("chatters を送るはず").chatters.len(),
+            4
+        );
+        task.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn poll_failure_appends_nothing_and_the_next_success_appends() {
+        let hub = FeedHub::new(10);
+        let dir = tempfile::tempdir().unwrap();
+        let (outputs, path) = outputs_with_log(&hub, dir.path());
+        let fetch = scripted(
+            vec![Err(anyhow::anyhow!("boom")), Ok(vec![feed_chatter("a")])],
+            Arc::new(AtomicUsize::new(0)),
+        );
+        let task =
+            tokio::spawn(
+                async move { poll_chatters(&outputs, Duration::from_secs(60), fetch).await },
+            );
+
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert!(lines(&path).is_empty(), "失敗した周期では書かない");
+
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        let logged = lines(&path);
+        assert_eq!(logged.len(), 1, "{logged:?}");
+        assert_eq!(logins_part(&logged[0]), "a");
+        task.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn append_failure_keeps_polling_and_the_next_cycle_writes_again() {
+        let hub = FeedHub::new(10);
+        let dir = tempfile::tempdir().unwrap();
+        let (outputs, path) = outputs_with_log(&hub, dir.path());
+        let sub = path.parent().unwrap().to_path_buf();
+        std::fs::remove_dir_all(&sub).unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let fetch = scripted(
+            vec![Ok(vec![feed_chatter("a")]), Ok(vec![feed_chatter("b")])],
+            Arc::clone(&calls),
+        );
+        let task =
+            tokio::spawn(
+                async move { poll_chatters(&outputs, Duration::from_secs(60), fetch).await },
+            );
+
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert!(!task.is_finished(), "追記に失敗してもループは止まらない");
+        let snap = hub.subscribe().0;
+        assert!(snap.chatters.is_some(), "配信は続ける");
+        assert!(snap.status.chatters_last_success.is_some());
+        assert_eq!(snap.status.chatters_last_error, None);
+
+        std::fs::create_dir(&sub).unwrap();
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        let logged = lines(&path);
+        assert_eq!(logged.len(), 1, "{logged:?}");
+        assert_eq!(logins_part(&logged[0]), "b", "復旧後の周期で書けるはず");
         task.abort();
     }
 
@@ -542,7 +706,7 @@ mod tests {
         };
         let task = tokio::spawn({
             let hub = hub.clone();
-            async move { poll_chatters(&hub, Duration::from_millis(100), fetch).await }
+            async move { poll_chatters(&no_log(hub), Duration::from_millis(100), fetch).await }
         });
 
         // 遅い取得は 0..350ms。直後の 350ms に 1 回、次は 450ms。

@@ -1,9 +1,11 @@
 use std::time::Duration;
 
+use crate::chat::ChattersOutputs;
+use crate::chatters_log::ChattersLog;
 use crate::eventsub::NotificationSink;
 use crate::feed::{FeedHub, Link, LinkStatus, NotificationLine};
 use crate::irc::ChatOutputs;
-use crate::settings::Settings;
+use crate::settings::{MonitorSettings, Settings};
 use crate::store::{SharedStore, Store, StoreError};
 use crate::{eventsub::sub_event_client_loop, irc::read_chat_client_loop};
 use anyhow::bail;
@@ -91,6 +93,27 @@ async fn resolve_broadcaster_id(
     .await
 }
 
+/// `read-chat` 起動時の `chatters_log` の検査と準備。未設定なら `None`。
+///
+/// 周期取得は `monitor.enabled = true` のときだけ動くので、無効なのに追記先がある設定は
+/// 矛盾としてエラーにする。他のサブコマンドは同じ設定で動くよう、検査は設定の読み込みでは
+/// なくここで行う。
+fn open_chatters_log(
+    monitor: &MonitorSettings,
+    channel: &str,
+    username: &str,
+) -> anyhow::Result<Option<ChattersLog>> {
+    let Some(path) = &monitor.chatters_log else {
+        return Ok(None);
+    };
+    if !monitor.enabled {
+        bail!(
+            "monitor.chatters_log is set but monitor.enabled = false (set monitor.enabled = true or remove monitor.chatters_log)"
+        );
+    }
+    ChattersLog::open(path, channel, username).map(Some)
+}
+
 /// 監視用の処理（ハブ・配信口・通知の橋渡し・視聴者一覧の周期取得）。`read-chat` の 1 回の
 /// 実行につき 1 度だけ起動し、IRC / EventSub の再接続をまたいで生き続ける。
 ///
@@ -103,12 +126,14 @@ struct Monitor {
 }
 
 impl Monitor {
-    /// `monitor.enabled = false` のときは何も起動せず `None`。
+    /// `monitor.enabled = false` のときは何も起動せず `None`。`chatters_log` は
+    /// `open_chatters_log` で起動時に開いたもの。
     async fn start(
         settings: &Settings,
         store: &SharedStore,
         broadcaster_id: &str,
         user_id: &str,
+        chatters_log: Option<ChattersLog>,
     ) -> Option<Self> {
         let monitor = &settings.monitor;
         if !monitor.enabled {
@@ -117,7 +142,10 @@ impl Monitor {
         let hub = FeedHub::new(monitor.history_size);
         let (sink, bridge) = notification_bridge(hub.clone());
         let poll = tokio::spawn(crate::chat::chatters_poll_loop(
-            hub.clone(),
+            ChattersOutputs {
+                hub: hub.clone(),
+                log: chatters_log,
+            },
             store.clone(),
             broadcaster_id.to_string(),
             user_id.to_string(),
@@ -181,6 +209,8 @@ async fn prepare_reconnect<E: std::fmt::Display>(
 pub async fn yomiage(settings: &Settings) -> anyhow::Result<()> {
     let irc_url = url::Url::parse(IRC_CONNECT_ADDR)?;
     let event_url = url::Url::parse(EVENT_CONNECT_ADDR)?;
+    // 設定の矛盾や開けない追記先は、接続を始める前に起動を中止する
+    let chatters_log = open_chatters_log(&settings.monitor, &settings.channel, &settings.username)?;
     // トークンの持ち主はここ 1 つ。視聴者一覧の周期取得も同じハンドルを共有する。
     let store: SharedStore = {
         let _span = tracing::info_span!("store_new").entered();
@@ -197,7 +227,7 @@ pub async fn yomiage(settings: &Settings) -> anyhow::Result<()> {
         .await?;
     let broadcaster_id = resolve_broadcaster_id(&store, settings).await?;
     // 再接続のループの外で 1 度だけ起動する（ハブの保持内容を再接続で失わない）
-    let monitor = Monitor::start(settings, &store, &broadcaster_id, &user_id).await;
+    let monitor = Monitor::start(settings, &store, &broadcaster_id, &user_id, chatters_log).await;
     let hub = monitor.as_ref().map(|m| m.hub.clone());
     loop {
         let access_token = store.lock().await.access_token().to_string();
@@ -256,6 +286,65 @@ mod tests {
     use super::*;
     use crate::eventsub::NotificationEvent;
     use crate::feed::{FeedMessage, NotificationLine};
+
+    fn monitor(enabled: bool, chatters_log: Option<std::path::PathBuf>) -> MonitorSettings {
+        MonitorSettings {
+            enabled,
+            chatters_log,
+            ..MonitorSettings::default()
+        }
+    }
+
+    #[test]
+    fn chatters_log_with_monitor_disabled_aborts_naming_both_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("chatters.csv");
+
+        let err = open_chatters_log(&monitor(false, Some(path.clone())), "ch", "bot")
+            .err()
+            .expect("矛盾した設定では起動しないはず");
+
+        let msg = format!("{err:#}");
+        assert!(msg.contains("chatters_log"), "{msg}");
+        assert!(msg.contains("enabled"), "{msg}");
+        assert!(!path.exists(), "検査で弾くのでファイルは作らない");
+    }
+
+    #[test]
+    fn chatters_log_is_opened_at_startup_when_monitor_is_enabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("chatters.csv");
+
+        let log = open_chatters_log(&monitor(true, Some(path.clone())), "ch", "bot").unwrap();
+
+        assert!(log.is_some());
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn chatters_log_that_cannot_be_opened_aborts_startup() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("no-such-dir").join("chatters.csv");
+
+        let err = open_chatters_log(&monitor(true, Some(path.clone())), "ch", "bot")
+            .err()
+            .expect("開けなければ起動しないはず");
+
+        assert!(
+            format!("{err:#}").contains(&path.display().to_string()),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn no_chatters_log_means_nothing_to_open_either_way() {
+        assert!(open_chatters_log(&monitor(true, None), "ch", "bot")
+            .unwrap()
+            .is_none());
+        assert!(open_chatters_log(&monitor(false, None), "ch", "bot")
+            .unwrap()
+            .is_none());
+    }
 
     #[tokio::test]
     async fn notifications_from_the_sink_are_forwarded_to_the_hub() {

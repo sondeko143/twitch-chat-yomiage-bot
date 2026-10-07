@@ -2,6 +2,7 @@ mod api;
 mod auth;
 mod channel;
 mod chat;
+mod chatters_log;
 mod eventsub;
 mod feed;
 mod feed_server;

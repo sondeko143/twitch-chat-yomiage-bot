@@ -1,11 +1,25 @@
 //! `read-chat` の視聴者一覧の周期取得を、取得のたびに `show-chatters` と同じ書式で追記するログ
 //! （`[monitor] chatters_log`）。
 
-use crate::chat::format_chatters_line;
 use anyhow::Context;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+
+/// `show-chatters` と `chatters_log` の 1 行（改行なし）。配信者と bot 自身を除いた login を昇順に並べる。
+pub(crate) fn format_chatters_line<'a>(
+    now: chrono::NaiveDateTime,
+    logins: impl IntoIterator<Item = &'a str>,
+    channel_name: &str,
+    username: &str,
+) -> String {
+    let mut users: Vec<&str> = logins
+        .into_iter()
+        .filter(|name| *name != channel_name && *name != username)
+        .collect();
+    users.sort_unstable();
+    format!("{},{}", now.format("%Y-%m-%d %H:%M:%S"), users.join(","))
+}
 
 /// 視聴者一覧の追記先。行は `show-chatters` と同じく、配信者と bot 自身を除いた login 名。
 pub struct ChattersLog {
@@ -60,13 +74,44 @@ fn resolve(path: &Path) -> std::io::Result<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::ChattersLog;
+    use super::{format_chatters_line, ChattersLog};
 
     fn at(h: u32, mi: u32, s: u32) -> chrono::NaiveDateTime {
         chrono::NaiveDate::from_ymd_opt(2026, 8, 9)
             .unwrap()
             .and_hms_opt(h, mi, s)
             .unwrap()
+    }
+
+    #[test]
+    fn formats_timestamp_then_logins_sorted_ascending() {
+        let line = format_chatters_line(
+            at(12, 34, 56),
+            ["zoe", "alice", "bob"],
+            "mychannel",
+            "mybot",
+        );
+
+        assert_eq!(line, "2026-08-09 12:34:56,alice,bob,zoe");
+    }
+
+    #[test]
+    fn excludes_channel_owner_and_bot_account() {
+        let line = format_chatters_line(
+            at(0, 0, 0),
+            ["mychannel", "mybot", "viewer"],
+            "mychannel",
+            "mybot",
+        );
+
+        assert_eq!(line, "2026-08-09 00:00:00,viewer");
+    }
+
+    #[test]
+    fn keeps_trailing_comma_when_every_chatter_is_excluded() {
+        let line = format_chatters_line(at(0, 0, 0), ["mybot"], "mychannel", "mybot");
+
+        assert_eq!(line, "2026-08-09 00:00:00,");
     }
 
     #[test]

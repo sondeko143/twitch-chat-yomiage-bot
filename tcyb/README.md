@@ -213,7 +213,7 @@ chatters_log = "chatters.csv"
 
 - 行の書式は `show-chatters` と同一（ローカル時刻、`channel` と `username` を除いた login 名を昇順、0 人でも行末のカンマは残す）。既存の `chatters.csv` にもそのまま続けて追記できる。ファイルが無ければ作り、あれば末尾に足す。1 行ごとに flush する。
 - 取得の間隔は `chatters_interval_secs`。取得に失敗した周期は何も書かないので、その期間はファイル上で空白になる。
-- 相対パスは `read-chat` を起動したカレントディレクトリ基準。ローテーションはしない。ファイルが大きくなったら動かせば、次の周期で新しいファイルが作られる。
+- 相対パスは `read-chat` を起動したカレントディレクトリ基準（絶対パスはそのまま使う）。Windows で絶対パスを書くときは、シングルクォート（`'C:\path\chatters.csv'`）かスラッシュ区切り（`"C:/path/chatters.csv"`）にする。ダブルクォート内の `\` は TOML のエスケープなので、`"C:\path\chatters.csv"` はパースに失敗する。ローテーションはしない。ファイルが大きくなったら動かせば、次の周期で新しいファイルが作られる。
 - `monitor.enabled = false` のまま `chatters_log` を設定すると、`read-chat` は矛盾を示すエラーで起動を中止する。起動時に追記モードで開けないパスでも、OS のエラーとパスを示して中止する。この検査は `read-chat` の起動時だけで、`auth-code` など他のサブコマンドは同じ設定で従来どおり動く。
 - 稼働中の書き込み失敗では `read-chat` は止まらず、読み上げ・配信・次の周期の取得と記録を続ける。失敗は理由とパスつきで警告ログ（`warn`）に出る。
 - 配信口のプロトコルと TUI の表示は変わらない（[ADR-0028](../docs/adr/0028-read-chat-appends-chatters-log-to-configured-file.md)）。`show-chatters` は従来どおり標準出力のみで、ファイルへは書かない。

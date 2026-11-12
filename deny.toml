@@ -11,7 +11,8 @@ version = 2
 # unmaintained 通知の対象範囲。"workspace" は自分が直接依存するクレートのみ対象とし、
 # 制御できない深い推移的依存 (rustls-pemfile/yaml-rust 等) のノイズを抑える。
 unmaintained = "workspace"
-# 脆弱性 (vulnerability)・unsound は既定でエラー。
+# 脆弱性 (vulnerability) は全依存でエラー。unsound は既定スコープ (直接依存のみ) でエラーとなり、
+# 推移的依存の unsound は deny では落ちない (cargo audit の allowed warning にだけ出る)。
 # 誤検知や対応保留中のものは ID を追記して個別に無視する。
 ignore = []
 
